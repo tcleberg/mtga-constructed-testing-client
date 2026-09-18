@@ -1,0 +1,6 @@
+MTGA Constructed Testing Client is unofficial Fan Content. It is not approved
+or endorsed by Wizards of the Coast.
+
+The desktop application dynamically links Qt through PySide6 Essentials.
+PySide6/Qt licensing information is available at https://www.qt.io/licensing/.
+Installers must retain the Qt license files emitted with the packaged bundle.
