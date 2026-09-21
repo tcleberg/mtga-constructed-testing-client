@@ -7,6 +7,7 @@ from PyInstaller.utils.hooks import collect_submodules
 
 root = Path(SPECPATH).parents[1]
 name = "MTGA Constructed Testing"
+version = os.environ.get("APP_VERSION", "0.1.0")
 hidden = collect_submodules("keyring.backends")
 runtime_hook = root / "build/default_server.py"
 runtime_hook.parent.mkdir(parents=True, exist_ok=True)
@@ -57,7 +58,8 @@ if sys.platform == "darwin":
         bundle_identifier="com.mtga-cta.client",
         info_plist={
             "CFBundleDisplayName": name,
-            "CFBundleShortVersionString": "0.1.0",
+            "CFBundleShortVersionString": version,
+            "CFBundleVersion": version,
             "LSMinimumSystemVersion": "12.0",
             "LSUIElement": False,
             "NSHighResolutionCapable": True,

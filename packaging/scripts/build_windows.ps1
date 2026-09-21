@@ -5,7 +5,13 @@ Remove-Item -Recurse -Force build, dist, artifacts -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force artifacts | Out-Null
 
 python -m PyInstaller --clean --noconfirm packaging/pyinstaller/client.spec
-& ".\dist\MTGA Constructed Testing\MTGA Constructed Testing.exe" --self-test
+
+# The executable is windowed, so it detaches unless we wait for it explicitly.
+$SelfTest = Start-Process -FilePath ".\dist\MTGA Constructed Testing\MTGA Constructed Testing.exe" `
+  -ArgumentList "--self-test" -Wait -PassThru
+if ($SelfTest.ExitCode -ne 0) {
+  throw "Packaged self-test failed with exit code $($SelfTest.ExitCode)"
+}
 
 if ($env:WINDOWS_CERT_PFX -and $env:WINDOWS_CERT_PASSWORD) {
   signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `

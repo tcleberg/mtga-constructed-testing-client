@@ -19,7 +19,7 @@ fi
 
 cp -R "${APP}" dmg-root/
 ln -s /Applications dmg-root/Applications
-create-dmg --overwrite --no-code-sign \
+create-dmg --overwrite --skip-jenkins \
   --volname "MTGA Constructed Testing" \
   "${ARTIFACT}" dmg-root
 
@@ -31,6 +31,5 @@ if [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:
   xcrun stapler staple "${ARTIFACT}"
 fi
 
-shasum -a 256 "${ARTIFACT}" |
-  awk '{print $1 "  " substr($0, index($0,$2))}' \
+(cd artifacts && shasum -a 256 "$(basename "${ARTIFACT}")") \
   > "artifacts/SHA256SUMS-macos-${ARCH}.txt"
