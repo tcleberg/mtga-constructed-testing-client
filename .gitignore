@@ -5,5 +5,7 @@ __pycache__/
 build/
 dist/
 artifacts/
+dmg-root/
+*.egg-info/
 *.spec.bak
 .DS_Store

@@ -6,9 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from platformdirs import user_config_dir
-
-
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APP_ID = "com.mtga-cta.client"
 
