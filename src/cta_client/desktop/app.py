@@ -168,7 +168,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         self.add_heading = QLabel(
             "<h1>Connect to your testing group</h1>"
-            "<p>Enter the account issued by your tournament administrator.</p>"
+            "<p>Enter the account issued by your group's administrator.</p>"
         )
         self.add_heading.setWordWrap(True)
         layout.addWidget(self.add_heading)

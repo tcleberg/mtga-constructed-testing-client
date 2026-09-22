@@ -1,6 +1,6 @@
 # MTGA Constructed Testing Client
 
-Uploads summarized MTG Arena match telemetry to your tournament testing group. It does not upload raw logs.
+Uploads summarized MTG Arena match telemetry to your constructed testing group. It does not upload raw logs.
 
 ## Install
 
