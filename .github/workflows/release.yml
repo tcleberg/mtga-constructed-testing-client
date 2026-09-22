@@ -22,6 +22,15 @@ jobs:
             artifact: macos-x64
             arch: x86_64
     runs-on: ${{ matrix.os }}
+    # Job level rather than step level so the signing steps can test for
+    # them: a step's own `env` is not visible to its own `if`.
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -45,6 +54,28 @@ jobs:
       - name: Install create-dmg
         if: runner.os == 'macOS'
         run: brew install create-dmg
+      - name: Load signing credentials
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
+        run: |
+          # A runner has no keychain to sign from, so build a throwaway one
+          # and make it the default for the rest of the job.
+          KEYCHAIN="${RUNNER_TEMP}/signing.keychain-db"
+          PASSWORD="$(uuidgen)"
+          security create-keychain -p "${PASSWORD}" "${KEYCHAIN}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN}"
+          security unlock-keychain -p "${PASSWORD}" "${KEYCHAIN}"
+          printf '%s' "${APPLE_CERTIFICATE}" | base64 --decode > "${RUNNER_TEMP}/cert.p12"
+          security import "${RUNNER_TEMP}/cert.p12" -k "${KEYCHAIN}" \
+            -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign -f pkcs12
+          rm -f "${RUNNER_TEMP}/cert.p12"
+          # Without this, codesign wants interactive permission to use the
+          # key and fails with errSecInternalComponent on a headless runner.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "${PASSWORD}" "${KEYCHAIN}" > /dev/null
+          security list-keychain -d user -s "${KEYCHAIN}" login.keychain-db
+          # notarytool reads the key from a file, not the environment.
+          printf '%s' "${APPLE_API_KEY}" | base64 --decode > "${RUNNER_TEMP}/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=${RUNNER_TEMP}/AuthKey.p8" >> "${GITHUB_ENV}"
       - name: Build macOS image
         if: runner.os == 'macOS'
         env:
@@ -55,6 +86,13 @@ jobs:
           export APP_VERSION="${APP_VERSION#v}"
           chmod +x packaging/scripts/build_macos.sh
           packaging/scripts/build_macos.sh
+      - name: Discard signing credentials
+        if: always() && runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
+        run: |
+          rm -f "${RUNNER_TEMP}/AuthKey.p8"
+          if [[ -f "${RUNNER_TEMP}/signing.keychain-db" ]]; then
+            security delete-keychain "${RUNNER_TEMP}/signing.keychain-db"
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}

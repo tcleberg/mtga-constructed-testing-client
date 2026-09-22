@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Exemptions the hardened runtime needs before a frozen Python GUI will
+  launch. Notarization requires the hardened runtime, and the hardened
+  runtime forbids both of these by default, so without them the app is
+  accepted by Apple and then dies on startup.
+
+  Deliberately only these two. Every exemption is a weakening of the
+  runtime and is reviewed by the notary service, so anything not proven
+  necessary stays out.
+-->
+<plist version="1.0">
+<dict>
+  <!-- CPython writes and executes in the same pages. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!-- Qt loads its platform and style plugins as dylibs at runtime. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

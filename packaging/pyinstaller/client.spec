@@ -9,6 +9,14 @@ root = Path(SPECPATH).parents[1]
 name = "MTGA Constructed Testing"
 version = os.environ.get("APP_VERSION", "0.2.0")
 hidden = collect_submodules("keyring.backends")
+
+# Signing is done here rather than over the finished bundle because a
+# frozen app is hundreds of nested dylibs that have to be signed
+# innermost-first. PyInstaller walks them in that order, and adds the
+# hardened runtime and a secure timestamp that notarization requires.
+# Empty means ad-hoc, which is what local and unsigned CI builds get.
+signing_identity = os.environ.get("APPLE_SIGNING_IDENTITY") or None
+entitlements = str(root / "packaging/macos/entitlements.plist") if signing_identity else None
 runtime_hook = root / "build/default_server.py"
 runtime_hook.parent.mkdir(parents=True, exist_ok=True)
 runtime_hook.write_text(
@@ -41,6 +49,8 @@ exe = EXE(
     console=False,
     argv_emulation=False,
     target_arch=None,
+    codesign_identity=signing_identity,
+    entitlements_file=entitlements,
 )
 bundle = COLLECT(
     exe,
