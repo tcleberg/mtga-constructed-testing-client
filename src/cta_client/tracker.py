@@ -128,6 +128,8 @@ class MatchTracker:
         self.game_maindeck: list[int] = []
         self.game_sideboard: list[int] = []
         self.objects_by_owner: dict[int, dict[int, int]] = defaultdict(dict)
+        self.objects_by_instance: dict[int, int] = {}
+        self.owner_by_instance: dict[int, int] = {}
         self.played_instance_ids_by_owner: dict[int, set[int]] = defaultdict(set)
         self.object_types: dict[int, list[str]] = {}
         self.cards_in_hand: dict[int, list[int]] = defaultdict(list)
@@ -284,30 +286,48 @@ class MatchTracker:
                     int(player["turnNumber"]),
                 )
 
+        public_zone_ids = {
+            int(zone["zoneId"])
+            for zone in state.get("zones") or []
+            if zone.get("type") in {"ZoneType_Stack", "ZoneType_Battlefield"}
+            and zone.get("zoneId") is not None
+        }
+
         for game_object in state.get("gameObjects") or []:
             if game_object.get("type") not in {"GameObjectType_Card", "GameObjectType_SplitCard", None}:
                 if game_object.get("type") and not str(game_object.get("type")).startswith("GameObjectType_"):
                     continue
             owner = game_object.get("ownerSeatId")
+            if owner is None:
+                owner = game_object.get("controllerSeatId")
             instance_id = game_object.get("instanceId")
             card_id = _card_id(game_object)
-            if owner is None or instance_id is None or card_id is None:
+            if instance_id is None or card_id is None:
                 continue
-            self.objects_by_owner[int(owner)][int(instance_id)] = card_id
+            instance_id = int(instance_id)
+            self.objects_by_instance[instance_id] = card_id
+            if owner is not None:
+                owner = int(owner)
+                self.objects_by_owner[owner][instance_id] = card_id
+                self.owner_by_instance[instance_id] = owner
+                zone_id = game_object.get("zoneId")
+                if zone_id is not None and int(zone_id) in public_zone_ids:
+                    self.played_instance_ids_by_owner[owner].add(instance_id)
             types = game_object.get("cardTypes") or []
             if types:
                 self.object_types[card_id] = [str(t).replace("CardType_", "") for t in types]
 
         for zone in state.get("zones") or []:
-            owner = zone.get("ownerSeatId")
-            if owner is None:
-                continue
-            owner = int(owner)
             ids = [int(instance_id) for instance_id in (zone.get("objectInstanceIds") or [])]
             if zone.get("type") in {"ZoneType_Stack", "ZoneType_Battlefield"}:
-                self.played_instance_ids_by_owner[owner].update(ids)
-            if zone.get("type") != "ZoneType_Hand":
+                for instance_id in ids:
+                    owner = self.owner_by_instance.get(instance_id)
+                    if owner is not None:
+                        self.played_instance_ids_by_owner[owner].add(instance_id)
+            owner = zone.get("ownerSeatId")
+            if owner is None or zone.get("type") != "ZoneType_Hand":
                 continue
+            owner = int(owner)
             self.cards_in_hand[owner] = [
                 self.objects_by_owner[owner][instance_id]
                 for instance_id in ids
@@ -453,11 +473,12 @@ class MatchTracker:
         if seat is None:
             return []
         objects = self.objects_by_owner.get(seat, {})
-        return [
-            objects[instance_id]
-            for instance_id in sorted(self.played_instance_ids_by_owner.get(seat, set()))
-            if instance_id in objects
-        ]
+        cards: list[int] = []
+        for instance_id in sorted(self.played_instance_ids_by_owner.get(seat, set())):
+            card_id = objects.get(instance_id, self.objects_by_instance.get(instance_id))
+            if card_id is not None:
+                cards.append(card_id)
+        return cards
 
     def _turns_for_seat(self, seat: int | None) -> int:
         if seat is None:
@@ -481,6 +502,8 @@ class MatchTracker:
 
     def _reset_game_state(self, keep_match: bool) -> None:
         self.objects_by_owner = defaultdict(dict)
+        self.objects_by_instance = {}
+        self.owner_by_instance = {}
         self.played_instance_ids_by_owner = defaultdict(set)
         self.cards_in_hand = defaultdict(list)
         self.drawn_hands = defaultdict(list)

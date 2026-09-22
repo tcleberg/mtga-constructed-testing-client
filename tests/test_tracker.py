@@ -350,6 +350,76 @@ def test_tracks_played_card_instances_per_seat_without_double_counting():
     assert game.opponent_played_cards == [200]
 
 
+def test_public_stack_and_battlefield_plays_do_not_need_a_zone_owner():
+    tracker = MatchTracker()
+    tracker.consume({"authenticateResponse": {"screenName": "Tester", "clientId": "USER1"}})
+    tracker.consume(_room("public-zones"))
+    tracker.consume(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {"matchID": "public-zones"},
+                            "gameObjects": [
+                                {
+                                    "type": "GameObjectType_Card",
+                                    "instanceId": 10,
+                                    "overlayGrpId": 100,
+                                    "ownerSeatId": 1,
+                                    "zoneId": 28,
+                                },
+                                {
+                                    "type": "GameObjectType_Card",
+                                    "instanceId": 20,
+                                    "grpId": 200,
+                                    "controllerSeatId": 2,
+                                    "zoneId": 31,
+                                },
+                            ],
+                            "zones": [
+                                {
+                                    "zoneId": 28,
+                                    "type": "ZoneType_Battlefield",
+                                    "objectInstanceIds": [10],
+                                },
+                                {
+                                    "zoneId": 31,
+                                    "type": "ZoneType_Stack",
+                                    "objectInstanceIds": [20],
+                                },
+                            ],
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    events = tracker.consume(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {
+                                "matchID": "public-zones",
+                                "stage": "GameStage_GameOver",
+                                "matchState": "MatchState_GameComplete",
+                                "results": [{"scope": "MatchScope_Game", "winningTeamId": 1}],
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    game = events[0]
+    assert game.player_played_cards == [100]
+    assert game.opponent_played_cards == [200]
+
+
 def test_each_finished_game_takes_its_own_row_from_the_cumulative_results():
     from cta_client.tracker import game_result_for_number
 
