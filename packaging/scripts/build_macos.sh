@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${APP_VERSION:-0.1.0}"
+VERSION="${APP_VERSION:-0.2.0}"
 ARCH="${TARGET_ARCH:-$(uname -m)}"
 APP="dist/MTGA Constructed Testing.app"
 ARTIFACT="artifacts/MTGA-Constructed-Testing-${VERSION}-macos-${ARCH}.dmg"

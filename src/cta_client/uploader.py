@@ -8,8 +8,17 @@ import httpx
 from cta_client import __version__
 
 
+# Bumped by the server only when the ingest contract changes in a way an
+# older client cannot satisfy.
+SUPPORTED_API_VERSION = 1
+
+
 class AuthenticationRequired(RuntimeError):
     pass
+
+
+class IncompatibleServer(RuntimeError):
+    """A server speaking a contract this client build does not know."""
 
 
 class TelemetryClient:
@@ -33,6 +42,33 @@ class TelemetryClient:
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"} if self.token else {}
+
+    def server_info(self) -> dict[str, Any]:
+        """Ask an address what it is before asking anyone to trust it.
+
+        Unauthenticated on purpose, so the add-server flow can show which
+        group a URL belongs to before the tester types a password.
+        """
+        response = self.http.get(f"{self.base_url}/api/server-info")
+        response.raise_for_status()
+        info = response.json()
+        version = int(info.get("api_version", 0))
+        if version > SUPPORTED_API_VERSION:
+            raise IncompatibleServer(
+                f"{info.get('group_name') or self.base_url} needs a newer client"
+            )
+        return info
+
+    def web_handoff_url(self) -> str:
+        """Trade this session for a one-shot link that signs the browser in.
+
+        Lets a tester reach their dashboard without typing the password
+        again. The link is single use and expires in about a minute, so it
+        is fetched immediately before opening a browser and never stored.
+        """
+        response = self.http.post(f"{self.base_url}/api/web-handoff", headers=self._headers())
+        self._raise(response)
+        return f"{self.base_url}{response.json()['path']}"
 
     def login(self, username: str, password: str, machine: dict[str, Any]) -> dict[str, Any]:
         response = self.http.post(

@@ -5,13 +5,15 @@ import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QLockFile, QThread, Signal, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QIcon
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -27,15 +29,32 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from cta_client.connection import ServerConnection
 from cta_client.credentials import CredentialStore
 from cta_client.desktop import autostart
-from cta_client.paths import client_config_dir, client_log_dir, default_player_log_path, load_client_config, save_client_config
-from cta_client.queue import UploadQueue
-from cta_client.service import TelemetryService, diagnostics, machine_payload
-from cta_client.uploader import AuthenticationRequired, TelemetryClient
-
+from cta_client.paths import client_config_dir, client_log_dir, default_player_log_path
+from cta_client.profiles import load_config, save_config
+from cta_client.service import ConnectionStatus, TelemetryService, diagnostics
+from cta_client.session import (
+    open_dashboard,
+    plant_dashboard_cookie,
+    restore_connections,
+    sign_in,
+)
+from cta_client.uploader import AuthenticationRequired, IncompatibleServer
 
 DEFAULT_SERVER_URL = os.environ.get("CTA_DEFAULT_SERVER_URL", "")
+
+STATE_LABELS = {
+    "uploading": "Uploading",
+    "waiting": "Waiting for Arena",
+    "reconnecting": "Reconnecting",
+    "degraded": "Uploading",
+    "authentication": "Sign-in required",
+    "paused": "Paused",
+    "idle": "No groups connected",
+    "starting": "Starting…",
+}
 
 
 class ServiceWorker(QObject):
@@ -53,50 +72,135 @@ class ServiceWorker(QObject):
         self.finished.emit()
 
 
+class SignInWorker(QObject):
+    """Signing in off the GUI thread.
+
+    A server can take several seconds to answer, and a window that stops
+    repainting while it does looks like a crash.
+    """
+
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, url: str, username: str, password: str, credentials: CredentialStore) -> None:
+        super().__init__()
+        self.url = url
+        self.username = username
+        self.password = password
+        self.credentials = credentials
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            connection = sign_in(self.url, self.username, self.password, self.credentials)
+        except AuthenticationRequired:
+            self.failed.emit("The username or password was rejected.")
+        except IncompatibleServer as error:
+            self.failed.emit(str(error))
+        except Exception as error:  # noqa: BLE001 - the message is the whole point
+            self.failed.emit(f"Could not reach that server.\n\n{type(error).__name__}: {error}")
+        else:
+            self.succeeded.emit(connection)
+
+
+class ServerRow(QFrame):
+    """One group's line in the status list."""
+
+    def __init__(self, url: str, window: MainWindow) -> None:
+        super().__init__()
+        self.url = url
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        layout = QVBoxLayout(self)
+        self.title = QLabel()
+        self.title.setStyleSheet("font-weight: 600")
+        self.detail = QLabel()
+        self.detail.setWordWrap(True)
+        self.detail.setStyleSheet("color: palette(mid)")
+        layout.addWidget(self.title)
+        layout.addWidget(self.detail)
+        buttons = QHBoxLayout()
+        self.dashboard = QPushButton("Open dashboard")
+        self.dashboard.clicked.connect(lambda: window.open_dashboard(url))
+        self.resign = QPushButton("Sign in")
+        self.resign.clicked.connect(lambda: window.prompt_sign_in(url))
+        remove = QPushButton("Remove")
+        remove.clicked.connect(lambda: window.remove_server(url))
+        buttons.addWidget(self.dashboard)
+        buttons.addWidget(self.resign)
+        buttons.addWidget(remove)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+
+    def update_status(self, status: ConnectionStatus) -> None:
+        self.title.setText(f"{status.label} — {status.username}")
+        self.detail.setText(status.detail or STATE_LABELS.get(status.state, status.state))
+        self.resign.setVisible(status.state == "authentication")
+        self.dashboard.setEnabled(status.state != "authentication")
+
+
 class MainWindow(QMainWindow):
     def __init__(self, *, background: bool = False) -> None:
         super().__init__()
         self.setWindowTitle("MTGA Constructed Testing")
-        self.resize(520, 390)
+        self.resize(560, 480)
         self.credentials = CredentialStore()
         self.credentials.migrate_legacy_token()
-        self.client: TelemetryClient | None = None
+        self.config = load_config()
         self.service: TelemetryService | None = None
         self.thread: QThread | None = None
+        self.rows: dict[str, ServerRow] = {}
+        self.sign_in_thread: QThread | None = None
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
-        self.login_page = self._build_login()
+        self.add_page = self._build_add_page()
         self.status_page = self._build_status()
-        self.stack.addWidget(self.login_page)
+        self.stack.addWidget(self.add_page)
         self.stack.addWidget(self.status_page)
         self._build_tray()
-        self._restore_session()
+        self._restore()
         if background and self.service is not None:
             self.hide()
 
-    def _build_login(self) -> QWidget:
+    # Pages -----------------------------------------------------------
+
+    def _build_add_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel("<h1>Connect to your testing group</h1><p>Enter the account issued by your tournament administrator.</p>"))
+        self.add_heading = QLabel(
+            "<h1>Connect to your testing group</h1>"
+            "<p>Enter the account issued by your tournament administrator.</p>"
+        )
+        self.add_heading.setWordWrap(True)
+        layout.addWidget(self.add_heading)
         form = QFormLayout()
+        self.server = QLineEdit(DEFAULT_SERVER_URL)
         self.username = QLineEdit()
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password.returnPressed.connect(self._submit_sign_in)
+        form.addRow("Group server", self.server)
         form.addRow("Username", self.username)
         form.addRow("Password", self.password)
         layout.addLayout(form)
         advanced = QGroupBox("Advanced")
         advanced.setCheckable(True)
-        advanced.setChecked(not bool(DEFAULT_SERVER_URL))
+        advanced.setChecked(False)
         advanced_layout = QFormLayout(advanced)
-        self.server = QLineEdit(DEFAULT_SERVER_URL)
-        self.log_path = QLineEdit(str(default_player_log_path()))
-        advanced_layout.addRow("Server URL", self.server)
+        self.log_path = QLineEdit(self.config.log_path or str(default_player_log_path()))
         advanced_layout.addRow("Arena log", self.log_path)
         layout.addWidget(advanced)
-        connect = QPushButton("Sign in and start uploading")
-        connect.clicked.connect(self._login)
-        layout.addWidget(connect)
+        self.add_error = QLabel()
+        self.add_error.setWordWrap(True)
+        self.add_error.setStyleSheet("color: #b3261e")
+        layout.addWidget(self.add_error)
+        actions = QHBoxLayout()
+        self.connect_button = QPushButton("Sign in and start uploading")
+        self.connect_button.clicked.connect(self._submit_sign_in)
+        self.cancel_add = QPushButton("Cancel")
+        self.cancel_add.clicked.connect(lambda: self.stack.setCurrentWidget(self.status_page))
+        actions.addWidget(self.connect_button)
+        actions.addWidget(self.cancel_add)
+        layout.addLayout(actions)
         layout.addStretch()
         return page
 
@@ -110,6 +214,11 @@ class MainWindow(QMainWindow):
         self.detail.setWordWrap(True)
         layout.addWidget(self.state)
         layout.addWidget(self.detail)
+        self.server_list = QVBoxLayout()
+        layout.addLayout(self.server_list)
+        add = QPushButton("Add another group")
+        add.clicked.connect(lambda: self.prompt_sign_in(None))
+        layout.addWidget(add)
         self.autostart = QCheckBox("Start automatically when I sign in")
         self.autostart.setChecked(autostart.enabled())
         self.autostart.toggled.connect(autostart.set_enabled)
@@ -123,9 +232,6 @@ class MainWindow(QMainWindow):
         buttons.addWidget(self.pause)
         buttons.addWidget(diagnostics_button)
         layout.addLayout(buttons)
-        sign_out = QPushButton("Sign out")
-        sign_out.clicked.connect(self._sign_out)
-        layout.addWidget(sign_out)
         layout.addStretch()
         return page
 
@@ -146,47 +252,32 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(quit_action)
         self.tray.setContextMenu(menu)
-        self.tray.activated.connect(lambda reason: self._show() if reason == QSystemTrayIcon.ActivationReason.DoubleClick else None)
+        self.tray.activated.connect(
+            lambda reason: self._show()
+            if reason == QSystemTrayIcon.ActivationReason.DoubleClick
+            else None
+        )
         self.tray.show()
 
-    def _restore_session(self) -> None:
-        config = load_client_config()
-        self.server.setText(config.get("server", DEFAULT_SERVER_URL))
-        self.username.setText(config.get("username", ""))
-        self.log_path.setText(config.get("log_path", str(default_player_log_path())))
-        server, username = self.server.text().strip(), self.username.text().strip()
-        token = self.credentials.get_token(server, username) if server and username else None
-        if token:
-            self._start(server, username, token)
+    # Lifecycle -------------------------------------------------------
 
-    @Slot()
-    def _login(self) -> None:
-        server, username, password = self.server.text().strip(), self.username.text().strip(), self.password.text()
-        if not server or not username or not password:
-            QMessageBox.warning(self, "Missing information", "Enter server URL, username, and password.")
+    def _restore(self) -> None:
+        connections = restore_connections(self.config, self.credentials)
+        if not connections:
+            self.cancel_add.setVisible(False)
+            self.stack.setCurrentWidget(self.add_page)
             return
-        client = TelemetryClient(server)
-        try:
-            client.login(username, password, machine_payload())
-        except AuthenticationRequired:
-            QMessageBox.warning(self, "Sign-in failed", "The username or password was rejected.")
-            client.close()
-            return
-        self.credentials.set_token(server, username, client.token or "")
-        client.close()
-        save_client_config({"server": server, "username": username, "log_path": self.log_path.text()})
-        self.password.clear()
-        self._start(server, username, self.credentials.get_token(server, username) or "")
-        if not autostart.enabled():
-            self.autostart.setChecked(True)
+        self._start(connections)
+        for connection in connections:
+            # Catches installs that predate the handoff, and any group
+            # added before the browser was ever signed in.
+            if plant_dashboard_cookie(connection, self.config):
+                save_config(self.config)
 
-    def _start(self, server: str, username: str, token: str) -> None:
-        self._stop_service()
-        self.client = TelemetryClient(server, token)
+    def _start(self, connections: list[ServerConnection]) -> None:
         self.service = TelemetryService(
-            self.client,
-            __import__("pathlib").Path(self.log_path.text()),
-            UploadQueue(client_config_dir() / "uploads.jsonl"),
+            connections,
+            Path(self.config.log_path or str(default_player_log_path())),
             lambda *_: None,
         )
         worker = ServiceWorker(self.service)
@@ -195,30 +286,157 @@ class MainWindow(QMainWindow):
         thread.started.connect(worker.run)
         worker.status.connect(self._status)
         worker.finished.connect(thread.quit)
-        worker.finished.connect(self._authentication_ended)
         thread.finished.connect(worker.deleteLater)
         self._worker = worker
         self.thread = thread
         thread.start()
+        self._refresh_rows()
         self.stack.setCurrentWidget(self.status_page)
+
+    # Sign-in ---------------------------------------------------------
+
+    @Slot()
+    def prompt_sign_in(self, url: str | None = None) -> None:
+        """Show the add page, either blank or aimed at a known group."""
+        profile = self.config.find(url) if url else None
+        self.add_heading.setText(
+            f"<h1>Sign in to {profile.label}</h1><p>Your session expired or was ended.</p>"
+            if profile
+            else "<h1>Connect to a testing group</h1>"
+            "<p>Enter the account issued by that group's administrator.</p>"
+        )
+        self.server.setText(profile.url if profile else DEFAULT_SERVER_URL)
+        self.username.setText(profile.username if profile else "")
+        self.password.clear()
+        self.add_error.clear()
+        self.cancel_add.setVisible(bool(self.config.servers))
+        self.stack.setCurrentWidget(self.add_page)
+        self.password.setFocus() if profile else self.server.setFocus()
+
+    @Slot()
+    def _submit_sign_in(self) -> None:
+        url, username, password = (
+            self.server.text().strip(),
+            self.username.text().strip(),
+            self.password.text(),
+        )
+        if not url or not username or not password:
+            self.add_error.setText("Enter the group server, username, and password.")
+            return
+        self.config.log_path = self.log_path.text().strip() or str(default_player_log_path())
+        self.connect_button.setEnabled(False)
+        self.connect_button.setText("Connecting…")
+        self.add_error.clear()
+        worker = SignInWorker(url, username, password, self.credentials)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._sign_in_succeeded)
+        worker.failed.connect(self._sign_in_failed)
+        worker.succeeded.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        self._sign_in_worker = worker
+        self.sign_in_thread = thread
+        thread.start()
+
+    @Slot(object)
+    def _sign_in_succeeded(self, connection: ServerConnection) -> None:
+        self._reset_sign_in_button()
+        self.password.clear()
+        replaced = self.service.remove_connection(connection.profile.url) if self.service else None
+        if replaced is not None:
+            replaced.close()
+        self.config.upsert(connection.profile)
+        save_config(self.config)
+        if self.service is None:
+            self._start([connection])
+        else:
+            self.service.add_connection(connection)
+            self._refresh_rows()
+            self.stack.setCurrentWidget(self.status_page)
+        if plant_dashboard_cookie(connection, self.config):
+            save_config(self.config)
+        if not autostart.enabled():
+            self.autostart.setChecked(True)
+
+    @Slot(str)
+    def _sign_in_failed(self, message: str) -> None:
+        self._reset_sign_in_button()
+        self.add_error.setText(message)
+
+    def _reset_sign_in_button(self) -> None:
+        self.connect_button.setEnabled(True)
+        self.connect_button.setText("Sign in and start uploading")
+
+    # Per-server actions ----------------------------------------------
+
+    @Slot()
+    def open_dashboard(self, url: str) -> None:
+        connection = self._connection(url)
+        if connection is None:
+            return
+        if not open_dashboard(connection):
+            self.detail.setText(f"Could not open the dashboard for {connection.profile.label}.")
+
+    @Slot()
+    def remove_server(self, url: str) -> None:
+        profile = self.config.find(url)
+        if profile is None:
+            return
+        if QMessageBox.question(
+            self,
+            "Remove group",
+            f"Stop uploading to {profile.label}?\n\n"
+            "Matches already uploaded stay with that group.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        connection = self.service.remove_connection(url) if self.service else None
+        if connection is not None:
+            connection.close()
+            connection.queue.path.unlink(missing_ok=True)
+        self.credentials.delete_token(profile.url, profile.username)
+        self.config.remove(url)
+        save_config(self.config)
+        self._refresh_rows()
+        if not self.config.servers:
+            self._stop_service()
+            self.prompt_sign_in(None)
+
+    def _connection(self, url: str) -> ServerConnection | None:
+        if self.service is None:
+            return None
+        return next((c for c in self.service.connections if c.profile.url == url), None)
+
+    # Status ----------------------------------------------------------
 
     @Slot(str, str)
     def _status(self, state: str, message: str) -> None:
-        labels = {
-            "uploading": "Uploading",
-            "waiting": "Waiting for Arena",
-            "reconnecting": "Reconnecting",
-            "paused": "Paused",
-            "authentication": "Sign-in required",
-        }
-        self.state.setText(labels.get(state, state.title()))
+        self.state.setText(STATE_LABELS.get(state, state.title()))
         self.detail.setText(message)
+        self._refresh_rows()
 
-    @Slot()
-    def _authentication_ended(self) -> None:
-        if self.state.text() == "Sign-in required":
-            self.stack.setCurrentWidget(self.login_page)
-            self.show()
+    def _refresh_rows(self) -> None:
+        """Keep one row per group, updating in place.
+
+        Rebuilding the list on every status tick would destroy whichever
+        button the tester was reaching for, so widgets are only created
+        and removed when the set of groups actually changes.
+        """
+        statuses = self.service.snapshot() if self.service else []
+        seen = {status.url for status in statuses}
+        for url in list(self.rows):
+            if url not in seen:
+                row = self.rows.pop(url)
+                self.server_list.removeWidget(row)
+                row.deleteLater()
+        for status in statuses:
+            row = self.rows.get(status.url)
+            if row is None:
+                row = ServerRow(status.url, self)
+                self.rows[status.url] = row
+                self.server_list.addWidget(row)
+            row.update_status(status)
 
     @Slot(bool)
     def _pause(self, paused: bool) -> None:
@@ -233,24 +451,15 @@ class MainWindow(QMainWindow):
             QApplication.clipboard().setText(diagnostics(self.service))
             self.detail.setText("Diagnostics copied to clipboard.")
 
-    @Slot()
-    def _sign_out(self) -> None:
-        config = load_client_config()
-        if config.get("server") and config.get("username"):
-            self.credentials.delete_token(config["server"], config["username"])
-        self._stop_service()
-        self.stack.setCurrentWidget(self.login_page)
-        self.show()
-
     def _stop_service(self) -> None:
         if self.service:
             self.service.stop()
+            for connection in self.service.connections:
+                connection.close()
         if self.thread:
             self.thread.quit()
             self.thread.wait(3000)
-        if self.client:
-            self.client.close()
-        self.service = self.client = self.thread = None
+        self.service = self.thread = None
 
     def _show(self) -> None:
         self.show()

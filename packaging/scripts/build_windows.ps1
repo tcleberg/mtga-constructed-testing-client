@@ -1,5 +1,5 @@
 $ErrorActionPreference = "Stop"
-$Version = if ($env:APP_VERSION) { $env:APP_VERSION } else { "0.1.0" }
+$Version = if ($env:APP_VERSION) { $env:APP_VERSION } else { "0.2.0" }
 
 Remove-Item -Recurse -Force build, dist, artifacts -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force artifacts | Out-Null

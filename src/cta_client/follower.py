@@ -4,35 +4,47 @@ import argparse
 from pathlib import Path
 
 from cta_client.credentials import CredentialStore
-from cta_client.paths import client_config_dir, default_player_log_path, load_client_config, save_client_config
-from cta_client.queue import UploadQueue
-from cta_client.service import TelemetryService, machine_payload
-from cta_client.uploader import TelemetryClient
+from cta_client.profiles import load_config, normalize_server_url, save_config
+from cta_client.service import TelemetryService
+from cta_client.session import restore_connections, sign_in
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Upload Arena logs to the tournament server")
-    parser.add_argument("--server")
+    parser = argparse.ArgumentParser(description="Upload Arena logs to your testing group servers")
+    parser.add_argument("--server", help="add or sign in to this server")
     parser.add_argument("--username")
     parser.add_argument("--password", default=None)
     parser.add_argument("--log-path", type=Path, default=None)
     args = parser.parse_args(argv)
-    config = load_client_config()
-    server = args.server or config.get("server")
-    username = args.username or config.get("username")
-    if not server or not username:
-        parser.error("--server and --username are required on first run")
+
     credentials = CredentialStore()
     credentials.migrate_legacy_token()
-    client = TelemetryClient(server, credentials.get_token(server, username))
+    config = load_config()
+
     if args.password:
-        client.login(username, args.password, machine_payload())
-        credentials.set_token(server, username, client.token or "")
-        save_client_config({"server": server, "username": username})
+        if not args.server or not args.username:
+            parser.error("--server and --username are required with --password")
+        connection = sign_in(args.server, args.username, args.password, credentials)
+        config.upsert(connection.profile)
+        save_config(config)
+    elif args.server and args.username:
+        # Naming a server without a password means "use the saved token",
+        # which lets a scripted run target one group out of several.
+        config.servers = [
+            server
+            for server in config.servers
+            if server.url == normalize_server_url(args.server) and server.username == args.username
+        ]
+        if not config.servers:
+            parser.error("that server and username have not been signed in; pass --password")
+
+    connections = restore_connections(config, credentials)
+    if not connections:
+        parser.error("no servers signed in; pass --server, --username, and --password")
+
     service = TelemetryService(
-        client,
-        args.log_path or default_player_log_path(),
-        UploadQueue(client_config_dir() / "uploads.jsonl"),
+        connections,
+        args.log_path or Path(config.log_path),
         lambda state, message: print(f"{state}: {message}"),
     )
     try:
@@ -40,7 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         service.stop()
     finally:
-        client.close()
+        for connection in connections:
+            connection.close()
     return 0
 
 

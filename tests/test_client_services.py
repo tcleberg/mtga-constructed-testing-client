@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import httpx
 
 import cta_client.credentials as credentials_module
+from cta_client import __version__
 from cta_client.credentials import CredentialStore
 from cta_client.queue import UploadQueue
 from cta_client.uploader import TelemetryClient
@@ -60,6 +61,9 @@ def test_login_and_heartbeat_report_client_version():
         client.login("alice", "password", {"machine_id": "machine"})
         client.heartbeat({"machine_id": "machine"})
 
-    assert b'"client_version":"0.1.0"' in requests[0].content
-    assert b'"client_version":"0.1.0"' in requests[1].content
+    # Against __version__ rather than a literal: the point is that the
+    # server is told which build is talking to it, not which build it is.
+    expected = f'"client_version":"{__version__}"'.encode()
+    assert expected in requests[0].content
+    assert expected in requests[1].content
     assert requests[1].headers["authorization"] == "Bearer token"
