@@ -5,7 +5,7 @@ Uploads summarized MTG Arena match telemetry to your tournament testing group. I
 ## Install
 
 1. In Arena, open **Options → Account**, enable **Detailed Logs (Plugin Support)**, then restart Arena.
-2. Open the latest [release](https://github.com/thomascleberg/mtga-constructed-testing-client/releases/latest).
+2. Open the latest [release](https://github.com/tcleberg/mtga-constructed-testing-client/releases/latest).
 3. Download and run:
    - Windows: `MTGA-Constructed-Testing-*-windows-x64-setup.exe`
    - Apple silicon Mac: `*-macos-arm64.dmg`
