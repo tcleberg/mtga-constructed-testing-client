@@ -348,3 +348,86 @@ def test_tracks_played_card_instances_per_seat_without_double_counting():
     game = events[0]
     assert game.player_played_cards == [100]
     assert game.opponent_played_cards == [200]
+
+
+def test_each_finished_game_takes_its_own_row_from_the_cumulative_results():
+    from cta_client.tracker import game_result_for_number
+
+    results = [
+        {"scope": "MatchScope_Game", "winningTeamId": 2},
+        {"scope": "MatchScope_Game", "winningTeamId": 1},
+        {"scope": "MatchScope_Game", "winningTeamId": 2},
+    ]
+    assert game_result_for_number(results, 1)["winningTeamId"] == 2
+    assert game_result_for_number(results, 2)["winningTeamId"] == 1
+    assert game_result_for_number(results, 3)["winningTeamId"] == 2
+
+
+def test_a_bo3_stops_emitting_games_after_two_wins():
+    tracker = MatchTracker()
+    tracker.consume({"authenticateResponse": {"screenName": "Tester", "clientId": "USER1"}})
+    tracker.consume(_room("bo3-done", event="Traditional_Ladder"))
+    tracker.current_best_of = 3
+    tracker.seat_id = 1
+
+    def finish(game_number: int, winner: int, results: list) -> list:
+        tracker.game_number = game_number
+        return tracker.consume(
+            {
+                "greToClientEvent": {
+                    "greToClientMessages": [
+                        {
+                            "type": "GREMessageType_GameStateMessage",
+                            "systemSeatIds": [1],
+                            "gameStateMessage": {
+                                "gameInfo": {
+                                    "matchID": "bo3-done",
+                                    "gameNumber": game_number,
+                                    "matchWinCondition": "MatchWinCondition_Best2Of3",
+                                    "stage": "GameStage_GameOver",
+                                    "matchState": "MatchState_GameComplete",
+                                    "results": results,
+                                }
+                            },
+                        }
+                    ]
+                }
+            }
+        )
+
+    g1 = finish(1, 2, [{"scope": "MatchScope_Game", "winningTeamId": 2}])
+    g2 = finish(
+        2,
+        2,
+        [
+            {"scope": "MatchScope_Game", "winningTeamId": 2},
+            {"scope": "MatchScope_Game", "winningTeamId": 2},
+        ],
+    )
+    g3 = finish(
+        3,
+        2,
+        [
+            {"scope": "MatchScope_Game", "winningTeamId": 2},
+            {"scope": "MatchScope_Game", "winningTeamId": 2},
+            {"scope": "MatchScope_Game", "winningTeamId": 2},
+        ],
+    )
+    assert g1[0].won is False
+    assert g2[0].won is False
+    assert g3 == []
+
+
+def test_format_comes_from_the_deck_attribute_not_the_queue_name():
+    tracker = MatchTracker()
+    tracker.consume(
+        {
+            "EventName": "Traditional_Ladder",
+            "Deck": {
+                "MainDeck": [1],
+                "Attributes": [{"name": "Format", "value": "Standard"}],
+            },
+        }
+    )
+    assert tracker.current_format == "standard"
+    assert tracker.current_best_of == 3
