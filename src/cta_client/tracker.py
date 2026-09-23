@@ -5,6 +5,29 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from cta_client.formats import (
+    best_of_from_event_name,
+    best_of_from_win_condition,
+    format_from_attributes,
+)
+
+
+def game_result_for_number(results: list[Any], game_number: int) -> dict[str, Any]:
+    """Pick this game's row from Arena's cumulative results list.
+
+    gameInfo.results appends every finished game. Taking the first
+    MatchScope_Game row attributes G1's winner to G2 and G3.
+    """
+    game_results = [
+        row for row in results if isinstance(row, dict) and row.get("scope") == "MatchScope_Game"
+    ]
+    if not game_results:
+        return results[0] if results and isinstance(results[0], dict) else {}
+    index = max(int(game_number) - 1, 0)
+    if index < len(game_results):
+        return game_results[index]
+    return game_results[-1]
+
 
 def _card_id(game_object: dict[str, Any]) -> int | None:
     for key in ("overlayGrpId", "grpId", "cardId"):
@@ -41,6 +64,8 @@ def _expand_card_list(cards: Any) -> list[int]:
 class CompletedGame:
     match_id: str
     event_name: str | None
+    format: str | None
+    best_of: int | None
     game_number: int
     won: bool | None
     win_reason: str | None
@@ -70,6 +95,8 @@ class CompletedGame:
 class CompletedMatch:
     match_id: str
     event_name: str | None
+    format: str | None
+    best_of: int | None
     won: bool | None
     win_reason: str | None
     player_name: str | None
@@ -90,6 +117,9 @@ class MatchTracker:
         self.identity = Identity()
         self.current_match_id: str | None = None
         self.current_event_id: str | None = None
+        self.current_format: str | None = None
+        self.current_best_of: int | None = None
+        self.format_by_event: dict[str, str] = {}
         self.seat_id: int | None = None
         self.screen_names: dict[int, str] = {}
         self.arena_ids: dict[int, str] = {}
@@ -98,6 +128,8 @@ class MatchTracker:
         self.game_maindeck: list[int] = []
         self.game_sideboard: list[int] = []
         self.objects_by_owner: dict[int, dict[int, int]] = defaultdict(dict)
+        self.objects_by_instance: dict[int, int] = {}
+        self.owner_by_instance: dict[int, int] = {}
         self.played_instance_ids_by_owner: dict[int, set[int]] = defaultdict(set)
         self.object_types: dict[int, list[str]] = {}
         self.cards_in_hand: dict[int, list[int]] = defaultdict(list)
@@ -152,6 +184,13 @@ class MatchTracker:
         summary_event = payload.get("EventName") or obj.get("EventName")
         if summary_event:
             self.current_event_id = summary_event
+            if self.current_best_of is None:
+                self.current_best_of = best_of_from_event_name(summary_event)
+        declared = format_from_attributes(deck) or format_from_attributes(payload)
+        if declared is not None:
+            self.current_format = declared
+            if summary_event:
+                self.format_by_event[summary_event] = declared
         self.submitted_maindeck = _expand_card_list(deck.get("MainDeck") or deck.get("deckCards"))
         self.submitted_sideboard = _expand_card_list(deck.get("Sideboard") or deck.get("sideboardCards"))
 
@@ -162,6 +201,9 @@ class MatchTracker:
         event_id = config.get("eventId") or config.get("eventName")
         if event_id:
             self.current_event_id = event_id
+            self.current_format = self.current_format or self.format_by_event.get(event_id)
+            if self.current_best_of is None:
+                self.current_best_of = best_of_from_event_name(event_id)
         if match_id and match_id != self.current_match_id:
             if self.current_match_id is not None:
                 self._reset_game_state(keep_match=False)
@@ -218,6 +260,14 @@ class MatchTracker:
             self.current_match_id = match_id
         if game_info.get("gameNumber") is not None:
             self.game_number = int(game_info["gameNumber"])
+        win_condition = game_info.get("matchWinCondition") or game_info.get("winCondition")
+        from_condition = best_of_from_win_condition(
+            win_condition if isinstance(win_condition, str) else None
+        )
+        if from_condition is not None:
+            self.current_best_of = from_condition
+        elif self.current_best_of is None:
+            self.current_best_of = best_of_from_event_name(self.current_event_id)
         turn_info = state.get("turnInfo") or {}
         players = state.get("players") or []
         if turn_info.get("turnNumber"):
@@ -236,30 +286,48 @@ class MatchTracker:
                     int(player["turnNumber"]),
                 )
 
+        public_zone_ids = {
+            int(zone["zoneId"])
+            for zone in state.get("zones") or []
+            if zone.get("type") in {"ZoneType_Stack", "ZoneType_Battlefield"}
+            and zone.get("zoneId") is not None
+        }
+
         for game_object in state.get("gameObjects") or []:
             if game_object.get("type") not in {"GameObjectType_Card", "GameObjectType_SplitCard", None}:
                 if game_object.get("type") and not str(game_object.get("type")).startswith("GameObjectType_"):
                     continue
             owner = game_object.get("ownerSeatId")
+            if owner is None:
+                owner = game_object.get("controllerSeatId")
             instance_id = game_object.get("instanceId")
             card_id = _card_id(game_object)
-            if owner is None or instance_id is None or card_id is None:
+            if instance_id is None or card_id is None:
                 continue
-            self.objects_by_owner[int(owner)][int(instance_id)] = card_id
+            instance_id = int(instance_id)
+            self.objects_by_instance[instance_id] = card_id
+            if owner is not None:
+                owner = int(owner)
+                self.objects_by_owner[owner][instance_id] = card_id
+                self.owner_by_instance[instance_id] = owner
+                zone_id = game_object.get("zoneId")
+                if zone_id is not None and int(zone_id) in public_zone_ids:
+                    self.played_instance_ids_by_owner[owner].add(instance_id)
             types = game_object.get("cardTypes") or []
             if types:
                 self.object_types[card_id] = [str(t).replace("CardType_", "") for t in types]
 
         for zone in state.get("zones") or []:
-            owner = zone.get("ownerSeatId")
-            if owner is None:
-                continue
-            owner = int(owner)
             ids = [int(instance_id) for instance_id in (zone.get("objectInstanceIds") or [])]
             if zone.get("type") in {"ZoneType_Stack", "ZoneType_Battlefield"}:
-                self.played_instance_ids_by_owner[owner].update(ids)
-            if zone.get("type") != "ZoneType_Hand":
+                for instance_id in ids:
+                    owner = self.owner_by_instance.get(instance_id)
+                    if owner is not None:
+                        self.played_instance_ids_by_owner[owner].add(instance_id)
+            owner = zone.get("ownerSeatId")
+            if owner is None or zone.get("type") != "ZoneType_Hand":
                 continue
+            owner = int(owner)
             self.cards_in_hand[owner] = [
                 self.objects_by_owner[owner][instance_id]
                 for instance_id in ids
@@ -287,10 +355,16 @@ class MatchTracker:
             for owner, hand in self.cards_in_hand.items():
                 self.opening_hand[owner] = list(hand)
 
-        if game_info.get("stage") == "GameStage_GameOver" and game_info.get("matchState") == "MatchState_GameComplete":
+        if game_info.get("stage") == "GameStage_GameOver" and game_info.get("matchState") in {
+            "MatchState_GameComplete",
+            "MatchState_MatchComplete",
+        }:
+            if self._series_already_decided():
+                return []
             results = game_info.get("results") or []
-            game_result = next((r for r in results if r.get("scope") == "MatchScope_Game"), results[0] if results else {})
-            return self._maybe_complete_game_from_result(game_result)
+            return self._maybe_complete_game_from_result(
+                game_result_for_number(results, self.game_number)
+            )
         return []
 
     def _maybe_complete_game_from_result(self, result: dict[str, Any]) -> list[CompletedGame | CompletedMatch]:
@@ -320,6 +394,8 @@ class MatchTracker:
         match = CompletedMatch(
             match_id=self.current_match_id,
             event_name=self.current_event_id,
+            format=self.current_format,
+            best_of=self.current_best_of,
             won=won,
             win_reason=match_result.get("reason"),
             player_name=self.screen_names.get(self.seat_id) if self.seat_id else self.identity.screen_name,
@@ -366,6 +442,8 @@ class MatchTracker:
         return CompletedGame(
             match_id=self.current_match_id or "",
             event_name=self.current_event_id,
+            format=self.current_format,
+            best_of=self.current_best_of,
             game_number=self.game_number,
             won=won,
             win_reason=result.get("reason"),
@@ -395,11 +473,12 @@ class MatchTracker:
         if seat is None:
             return []
         objects = self.objects_by_owner.get(seat, {})
-        return [
-            objects[instance_id]
-            for instance_id in sorted(self.played_instance_ids_by_owner.get(seat, set()))
-            if instance_id in objects
-        ]
+        cards: list[int] = []
+        for instance_id in sorted(self.played_instance_ids_by_owner.get(seat, set())):
+            card_id = objects.get(instance_id, self.objects_by_instance.get(instance_id))
+            if card_id is not None:
+                cards.append(card_id)
+        return cards
 
     def _turns_for_seat(self, seat: int | None) -> int:
         if seat is None:
@@ -423,6 +502,8 @@ class MatchTracker:
 
     def _reset_game_state(self, keep_match: bool) -> None:
         self.objects_by_owner = defaultdict(dict)
+        self.objects_by_instance = {}
+        self.owner_by_instance = {}
         self.played_instance_ids_by_owner = defaultdict(set)
         self.cards_in_hand = defaultdict(list)
         self.drawn_hands = defaultdict(list)
@@ -439,3 +520,13 @@ class MatchTracker:
             self.screen_names = {}
             self.arena_ids = {}
             self._emitted_game_keys = set()
+            self.current_format = None
+            self.current_best_of = None
+
+    def _series_already_decided(self) -> bool:
+        """A Bo3 ends at two wins. A later GameOver is a different series."""
+        if (self.current_best_of or 3) != 3:
+            return False
+        player_wins = sum(1 for game in self.finished_games if game.won is True)
+        opponent_wins = sum(1 for game in self.finished_games if game.won is False)
+        return player_wins >= 2 or opponent_wins >= 2

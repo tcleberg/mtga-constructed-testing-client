@@ -29,7 +29,11 @@ analysis = Analysis(
     [str(root / "src/cta_client/desktop/app.py")],
     pathex=[str(root / "src")],
     binaries=[],
-    datas=[(str(root / "LICENSE"), "."), (str(root / "NOTICE"), ".")],
+    datas=[
+        (str(root / "LICENSE"), "."),
+        (str(root / "NOTICE"), "."),
+        (str(root / "src/cta_client/desktop/icon.svg"), "."),
+    ],
     hiddenimports=hidden,
     runtime_hooks=[str(runtime_hook)],
     excludes=["cta_server", "numpy", "scipy", "pytest"],

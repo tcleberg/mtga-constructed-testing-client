@@ -8,7 +8,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QLockFile, QThread, Signal, Slot
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStackedWidget,
-    QStyle,
     QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
@@ -44,6 +43,14 @@ from cta_client.session import (
 from cta_client.uploader import AuthenticationRequired, IncompatibleServer
 
 DEFAULT_SERVER_URL = os.environ.get("CTA_DEFAULT_SERVER_URL", "")
+
+
+def application_icon() -> QIcon:
+    if getattr(sys, "frozen", False):
+        path = Path(sys._MEIPASS) / "icon.svg"
+    else:
+        path = Path(__file__).with_name("icon.svg")
+    return QIcon(str(path))
 
 STATE_LABELS = {
     "uploading": "Uploading",
@@ -236,7 +243,7 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_tray(self) -> None:
-        icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        icon = application_icon()
         self.setWindowIcon(icon)
         self.tray = QSystemTrayIcon(icon, self)
         menu = QMenu()
@@ -490,6 +497,7 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging()
     app = QApplication(sys.argv[:1])
     app.setApplicationName("MTGA Constructed Testing")
+    app.setWindowIcon(application_icon())
     app.setQuitOnLastWindowClosed(False)
     lock = QLockFile(str(client_config_dir() / "client.lock"))
     lock.setStaleLockTime(10_000)

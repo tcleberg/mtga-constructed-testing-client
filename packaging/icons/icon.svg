@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="MTGA Constructed Testing">
+  <!-- Full-bleed square. macOS and Windows apply their own mask. -->
+  <rect width="1024" height="1024" fill="#0b1117"/>
+  <g transform="translate(512 708)">
+    <!-- Two decks fanned as a matchup. Frames stay e1px at 16×16. -->
+    <g transform="rotate(-17)">
+      <rect x="-368" y="-548" width="400" height="572" rx="72" fill="#f2c14e"/>
+      <rect x="-288" y="-468" width="240" height="412" rx="40" fill="#0b1117"/>
+    </g>
+    <g transform="rotate(17)">
+      <rect x="-32" y="-548" width="400" height="572" rx="72" fill="#f2c14e"/>
+      <rect x="48" y="-468" width="240" height="412" rx="40" fill="#0b1117"/>
+    </g>
+  </g>
+  <!-- Checklist tick: the testing mark, dominant at small sizes. -->
+  <path fill="#f2c14e" d="M318 548 458 706 734 354 638 278 458 538 402 476Z"/>
+</svg>
