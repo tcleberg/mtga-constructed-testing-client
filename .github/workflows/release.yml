@@ -21,6 +21,9 @@ jobs:
           - os: macos-15-intel
             artifact: macos-x64
             arch: x86_64
+          - os: ubuntu-24.04
+            artifact: linux-x64
+            arch: x86_64
     runs-on: ${{ matrix.os }}
     # Job level rather than step level so the signing steps can test for
     # them: a step's own `env` is not visible to its own `if`.
@@ -76,6 +79,16 @@ jobs:
           # notarytool reads the key from a file, not the environment.
           printf '%s' "${APPLE_API_KEY}" | base64 --decode > "${RUNNER_TEMP}/AuthKey.p8"
           echo "APPLE_API_KEY_PATH=${RUNNER_TEMP}/AuthKey.p8" >> "${GITHUB_ENV}"
+      - name: Build Linux archive
+        if: runner.os == 'Linux'
+        env:
+          APP_VERSION: ${{ github.ref_name }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          CTA_DEFAULT_SERVER_URL: ${{ vars.CTA_DEFAULT_SERVER_URL }}
+        run: |
+          export APP_VERSION="${APP_VERSION#v}"
+          chmod +x packaging/scripts/build_linux.sh
+          packaging/scripts/build_linux.sh
       - name: Build macOS image
         if: runner.os == 'macOS'
         env:
@@ -119,6 +132,7 @@ jobs:
           subject-path: |
             release/*.exe
             release/*.dmg
+            release/*.tar.gz
       - uses: softprops/action-gh-release@v3
         with:
           draft: true
@@ -126,4 +140,5 @@ jobs:
           files: |
             release/*.exe
             release/*.dmg
+            release/*.tar.gz
             release/SHA256SUMS.txt

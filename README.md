@@ -10,6 +10,7 @@ Uploads summarized MTG Arena match telemetry to your constructed testing group. 
    - Windows: `MTGA-Constructed-Testing-*-windows-x64-setup.exe`
    - Apple silicon Mac: `*-macos-arm64.dmg`
    - Intel Mac: `*-macos-x64.dmg`
+   - Linux x64: `*-linux-x86_64.tar.gz` — extract and run `MTGA Constructed Testing/MTGA Constructed Testing`
 4. Enter your group's server (for example `omaha.mtgtest.com`) and the username and password issued by its administrator.
 5. Confirm the status says **Uploading**. Closing the window leaves the tray/menu-bar client running.
 
