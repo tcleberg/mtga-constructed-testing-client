@@ -79,6 +79,15 @@ jobs:
           # notarytool reads the key from a file, not the environment.
           printf '%s' "${APPLE_API_KEY}" | base64 --decode > "${RUNNER_TEMP}/AuthKey.p8"
           echo "APPLE_API_KEY_PATH=${RUNNER_TEMP}/AuthKey.p8" >> "${GITHUB_ENV}"
+      - name: Install Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 \
+            libxcb-cursor0 libdbus-1-3
       - name: Build Linux archive
         if: runner.os == 'Linux'
         env:
