@@ -53,10 +53,18 @@ def discover_player_log_path() -> Path | None:
     return max(existing, key=lambda path: path.stat().st_mtime)
 
 
+def _normalized(path: Path) -> str:
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
 def _is_generated_default(path: Path) -> bool:
     """True when this is a stock guess, not a path the tester typed."""
-    defaults = {_fallback_player_log_path(), *_candidate_player_log_paths()}
-    return any(str(path) == str(default) for default in defaults)
+    target = _normalized(path)
+    defaults = [_fallback_player_log_path(), *_candidate_player_log_paths()]
+    if any(_normalized(default) == target for default in defaults):
+        return True
+    posix = Path(os.path.normpath(str(path))).as_posix().lower()
+    return posix.endswith("wizards of the coast/mtga/player.log")
 
 
 def _clean_configured_path(configured: str | None) -> Path | None:
@@ -65,7 +73,13 @@ def _clean_configured_path(configured: str | None) -> Path | None:
         text = text[7:]
     if not text:
         return None
-    return Path(os.path.expandvars(text)).expanduser()
+    text = os.path.expandvars(text)
+    if text.startswith("~"):
+        # Path.expanduser() on Windows ignores HOME and uses USERPROFILE.
+        # Path.home() is what discovery uses and what tests patch.
+        rest = text[1:].lstrip("/\\")
+        return Path.home() / rest if rest else Path.home()
+    return Path(text)
 
 
 def _fallback_player_log_path() -> Path:

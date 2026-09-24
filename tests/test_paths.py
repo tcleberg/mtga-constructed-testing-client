@@ -11,6 +11,7 @@ from cta_client.paths import (
 def _linux(monkeypatch, home: Path) -> None:
     monkeypatch.setattr("cta_client.paths.platform.system", lambda: "Linux")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.delenv("STEAM_DIR", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
 

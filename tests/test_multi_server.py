@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -89,7 +91,7 @@ def test_an_install_from_before_multi_server_keeps_its_server(config_dir):
     config = load_config()
 
     assert [(s.url, s.username) for s in config.servers] == [("https://omaha.mtgtest.com", "alice")]
-    assert config.log_path == "/logs/P.log"
+    assert Path(config.log_path) == Path("/logs/P.log")
 
 
 def test_the_migrated_token_is_still_found_because_the_url_matches(config_dir):

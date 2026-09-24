@@ -1,6 +1,6 @@
 [project]
 name = "mtga-constructed-testing-client"
-version = "0.3.1"
+version = "0.3.2"
 description = "Desktop MTG Arena telemetry client for constructed testing groups."
 readme = "README.md"
 requires-python = ">=3.11"
