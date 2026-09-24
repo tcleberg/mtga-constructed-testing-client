@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from cta_client.credentials import CredentialStore
+from cta_client.paths import resolve_player_log_path
 from cta_client.profiles import load_config, normalize_server_url, save_config
 from cta_client.service import TelemetryService
 from cta_client.session import restore_connections, sign_in
@@ -44,7 +45,9 @@ def main(argv: list[str] | None = None) -> int:
 
     service = TelemetryService(
         connections,
-        args.log_path or Path(config.log_path),
+        Path(args.log_path).expanduser()
+        if args.log_path
+        else resolve_player_log_path(config.log_path),
         lambda state, message: print(f"{state}: {message}"),
     )
     try:

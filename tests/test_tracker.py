@@ -501,3 +501,35 @@ def test_format_comes_from_the_deck_attribute_not_the_queue_name():
     )
     assert tracker.current_format == "standard"
     assert tracker.current_best_of == 3
+
+
+def test_named_event_format_replaces_a_stale_queue_format():
+    tracker = MatchTracker()
+    tracker.consume({"EventName": "Historic_Play", "Deck": {"MainDeck": [1]}})
+    assert tracker.current_format == "historic"
+    tracker.consume(
+        {
+            "matchGameRoomStateChangedEvent": {
+                "gameRoomInfo": {
+                    "gameRoomConfig": {
+                        "matchId": "pre-1",
+                        "eventId": "Prerelease_Standard_BO3_20260923",
+                    }
+                }
+            }
+        }
+    )
+    assert tracker.current_format == "standard"
+    assert tracker.current_best_of == 3
+
+
+def test_prerelease_standard_queues_are_standard_without_a_format_attribute():
+    for event_name, series in (
+        ("prerelease_Standard_BO3", 3),
+        ("prerelease_Standard_BO1", 1),
+        ("prerelease_Standard_B01", 1),
+    ):
+        tracker = MatchTracker()
+        tracker.consume({"EventName": event_name, "Deck": {"MainDeck": [1]}})
+        assert tracker.current_format == "standard", event_name
+        assert tracker.current_best_of == series, event_name

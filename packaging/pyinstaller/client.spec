@@ -7,7 +7,15 @@ from PyInstaller.utils.hooks import collect_submodules
 
 root = Path(SPECPATH).parents[1]
 name = "MTGA Constructed Testing"
-version = os.environ.get("APP_VERSION", "0.2.0")
+def _package_version() -> str:
+    if os.environ.get("APP_VERSION"):
+        return os.environ["APP_VERSION"]
+    import tomllib
+    with (root / "pyproject.toml").open("rb") as handle:
+        return tomllib.load(handle)["project"]["version"]
+
+
+version = _package_version()
 hidden = collect_submodules("keyring.backends")
 
 # Signing is done here rather than over the finished bundle because a

@@ -38,6 +38,24 @@ _ALIASES = {
     "traditionaltimeless": "timeless",
 }
 
+# Longer tokens first so premodern does not become modern.
+_EVENT_FORMAT_TOKENS: tuple[tuple[str, str], ...] = (
+    ("premodern", "premodern"),
+    ("traditionaltimeless", "timeless"),
+    ("traditionalhistoric", "historic"),
+    ("traditionalexplorer", "pioneer"),
+    ("traditionalstandard", "standard"),
+    ("timeless", "timeless"),
+    ("historic", "historic"),
+    ("explorer", "pioneer"),
+    ("pioneer", "pioneer"),
+    ("vintage", "vintage"),
+    ("modern", "modern"),
+    ("legacy", "legacy"),
+    ("standard", "standard"),
+)
+_NOT_CONSTRUCTED = ("brawl", "alchemy", "draft", "sealed")
+
 
 def canonical_format(value: str | None) -> str | None:
     if value is None:
@@ -46,6 +64,19 @@ def canonical_format(value: str | None) -> str | None:
     if not compact:
         return None
     return _ALIASES.get(compact)
+
+
+def format_from_event_name(event_name: str | None) -> str | None:
+    """Read a constructed format token out of an event id, if one is there."""
+    if not event_name or not str(event_name).strip():
+        return None
+    compact = event_name.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+    if any(token in compact for token in _NOT_CONSTRUCTED):
+        return None
+    for token, slug in _EVENT_FORMAT_TOKENS:
+        if token in compact:
+            return slug
+    return None
 
 
 def best_of_from_win_condition(value: str | None) -> int | None:
@@ -61,12 +92,14 @@ def best_of_from_win_condition(value: str | None) -> int | None:
 
 
 def best_of_from_event_name(event_name: str | None) -> int | None:
-    """Traditional queues are Bo3. Any other named queue is Bo1."""
+    """Traditional / Bo3 names are Bo3. Any other named queue is Bo1."""
     if not event_name or not str(event_name).strip():
         return None
     compact = event_name.lower().replace(" ", "").replace("_", "").replace("-", "")
-    if "traditional" in compact or "bestof3" in compact:
+    if "traditional" in compact or "bestof3" in compact or "bo3" in compact:
         return 3
+    if "bestof1" in compact or "bo1" in compact or "b01" in compact:
+        return 1
     return 1
 
 

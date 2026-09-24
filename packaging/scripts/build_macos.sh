@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${APP_VERSION:-0.2.0}"
+VERSION="${APP_VERSION:-$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')}"
 ARCH="${TARGET_ARCH:-$(uname -m)}"
 APP="dist/MTGA Constructed Testing.app"
 ARTIFACT="artifacts/MTGA-Constructed-Testing-${VERSION}-macos-${ARCH}.dmg"

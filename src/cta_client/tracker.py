@@ -9,6 +9,7 @@ from cta_client.formats import (
     best_of_from_event_name,
     best_of_from_win_condition,
     format_from_attributes,
+    format_from_event_name,
 )
 
 
@@ -184,9 +185,12 @@ class MatchTracker:
         summary_event = payload.get("EventName") or obj.get("EventName")
         if summary_event:
             self.current_event_id = summary_event
-            if self.current_best_of is None:
-                self.current_best_of = best_of_from_event_name(summary_event)
+            series = best_of_from_event_name(summary_event)
+            if series is not None:
+                self.current_best_of = series
         declared = format_from_attributes(deck) or format_from_attributes(payload)
+        if declared is None and summary_event:
+            declared = format_from_event_name(summary_event)
         if declared is not None:
             self.current_format = declared
             if summary_event:
@@ -201,9 +205,15 @@ class MatchTracker:
         event_id = config.get("eventId") or config.get("eventName")
         if event_id:
             self.current_event_id = event_id
-            self.current_format = self.current_format or self.format_by_event.get(event_id)
-            if self.current_best_of is None:
-                self.current_best_of = best_of_from_event_name(event_id)
+            named = format_from_event_name(event_id)
+            self.current_format = (
+                self.format_by_event.get(event_id)
+                or named
+                or self.current_format
+            )
+            series = best_of_from_event_name(event_id)
+            if series is not None:
+                self.current_best_of = series
         if match_id and match_id != self.current_match_id:
             if self.current_match_id is not None:
                 self._reset_game_state(keep_match=False)

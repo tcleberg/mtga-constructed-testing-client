@@ -12,7 +12,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field, replace
 
-from cta_client.paths import default_player_log_path, load_client_config, save_client_config
+from cta_client.paths import load_client_config, resolve_player_log_path, save_client_config
 
 
 def normalize_server_url(url: str) -> str:
@@ -110,7 +110,7 @@ def load_config() -> ClientConfig:
         ]
     return ClientConfig(
         servers=servers,
-        log_path=raw.get("log_path") or str(default_player_log_path()),
+        log_path=str(resolve_player_log_path(raw.get("log_path") or "")),
     )
 
 

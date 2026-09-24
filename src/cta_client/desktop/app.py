@@ -31,7 +31,13 @@ from PySide6.QtWidgets import (
 from cta_client.connection import ServerConnection
 from cta_client.credentials import CredentialStore
 from cta_client.desktop import autostart
-from cta_client.paths import client_config_dir, client_log_dir, default_player_log_path
+from cta_client.paths import (
+    client_config_dir,
+    client_log_dir,
+    default_player_log_path,
+    load_client_config,
+    resolve_player_log_path,
+)
 from cta_client.profiles import load_config, save_config
 from cta_client.service import ConnectionStatus, TelemetryService, diagnostics
 from cta_client.session import (
@@ -153,6 +159,9 @@ class MainWindow(QMainWindow):
         self.credentials = CredentialStore()
         self.credentials.migrate_legacy_token()
         self.config = load_config()
+        stored = load_client_config().get("log_path")
+        if stored != self.config.log_path:
+            save_config(self.config)
         self.service: TelemetryService | None = None
         self.thread: QThread | None = None
         self.rows: dict[str, ServerRow] = {}
@@ -284,7 +293,7 @@ class MainWindow(QMainWindow):
     def _start(self, connections: list[ServerConnection]) -> None:
         self.service = TelemetryService(
             connections,
-            Path(self.config.log_path or str(default_player_log_path())),
+            resolve_player_log_path(self.config.log_path),
             lambda *_: None,
         )
         worker = ServiceWorker(self.service)
@@ -330,7 +339,9 @@ class MainWindow(QMainWindow):
         if not url or not username or not password:
             self.add_error.setText("Enter the group server, username, and password.")
             return
-        self.config.log_path = self.log_path.text().strip() or str(default_player_log_path())
+        self.config.log_path = str(
+            resolve_player_log_path(self.log_path.text().strip())
+        )
         self.connect_button.setEnabled(False)
         self.connect_button.setText("Connecting…")
         self.add_error.clear()
@@ -359,6 +370,7 @@ class MainWindow(QMainWindow):
         if self.service is None:
             self._start([connection])
         else:
+            self.service.set_log_path(resolve_player_log_path(self.config.log_path))
             self.service.add_connection(connection)
             self._refresh_rows()
             self.stack.setCurrentWidget(self.status_page)

@@ -65,6 +65,15 @@ class TelemetryService:
     def set_paused(self, paused: bool) -> None:
         self.paused.set() if paused else self.paused.clear()
 
+    def set_log_path(self, log_path: Path) -> None:
+        """Follow a different Arena log without tearing the service down."""
+        if log_path == self.log_path:
+            return
+        self.log_path = log_path
+        self.offset = 0
+        self.inode = None
+        self.leftover = ""
+
     def snapshot(self) -> list[ConnectionStatus]:
         with self.lock:
             return [
