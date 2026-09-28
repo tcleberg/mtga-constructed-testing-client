@@ -62,13 +62,16 @@ def sign_in(
     client = TelemetryClient(url)
     try:
         info = client.server_info()
-        client.login(username, password, machine_payload())
+        payload = client.login(username, password, machine_payload())
         token = client.token or ""
     finally:
         client.close()
     credentials.set_token(url, username, token)
     profile = ServerProfile(url=url, username=username, group_name=info.get("group_name", ""))
-    return connection_for(profile, token)
+    connection = connection_for(profile, token)
+    connection.apply_client_update(info)
+    connection.apply_client_update(payload)
+    return connection
 
 
 def open_dashboard(connection: ServerConnection) -> bool:

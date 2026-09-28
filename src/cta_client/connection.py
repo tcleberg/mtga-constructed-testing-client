@@ -17,6 +17,7 @@ import httpx
 
 from cta_client.profiles import ServerProfile
 from cta_client.queue import QueuedUpload, UploadQueue
+from cta_client.update import advertised_update
 from cta_client.uploader import AuthenticationRequired, TelemetryClient
 
 HEARTBEAT_INTERVAL = 20.0
@@ -38,6 +39,10 @@ class ServerConnection:
         self.backoff = 1.0
         self.retry_after = 0.0
         self.last_heartbeat = 0.0
+        # Filled from handshake / heartbeat when the server names a newer cut.
+        # Never blocks uploads; the GUI is what acts on it.
+        self.update_version = ""
+        self.update_url = ""
 
     @property
     def needs_sign_in(self) -> bool:
@@ -106,8 +111,14 @@ class ServerConnection:
         now = time.monotonic()
         if now - self.last_heartbeat < HEARTBEAT_INTERVAL:
             return
-        self.client.heartbeat(machine)
+        self.apply_client_update(self.client.heartbeat(machine))
         self.last_heartbeat = now
+
+    def apply_client_update(self, payload: dict[str, Any]) -> None:
+        update = advertised_update(payload)
+        if update is None:
+            return
+        self.update_version, self.update_url = update
 
     def close(self) -> None:
         self.client.close()

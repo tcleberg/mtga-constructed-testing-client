@@ -7,8 +7,8 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QLockFile, QThread, Signal, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QIcon
+from PySide6.QtCore import QObject, QLockFile, QThread, QUrl, Signal, Slot
+from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from cta_client import __version__
 from cta_client.connection import ServerConnection
 from cta_client.credentials import CredentialStore
 from cta_client.desktop import autostart
@@ -46,6 +47,7 @@ from cta_client.session import (
     restore_connections,
     sign_in,
 )
+from cta_client.update import pending_update
 from cta_client.uploader import AuthenticationRequired, IncompatibleServer
 
 DEFAULT_SERVER_URL = os.environ.get("CTA_DEFAULT_SERVER_URL", "")
@@ -166,6 +168,9 @@ class MainWindow(QMainWindow):
         self.thread: QThread | None = None
         self.rows: dict[str, ServerRow] = {}
         self.sign_in_thread: QThread | None = None
+        self._update_version = ""
+        self._update_url = ""
+        self._notified_update = ""
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
         self.add_page = self._build_add_page()
@@ -224,6 +229,27 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.addWidget(QLabel("<h1>MTGA Constructed Testing</h1>"))
+        self.update_banner = QFrame()
+        self.update_banner.setObjectName("updateBanner")
+        self.update_banner.setStyleSheet(
+            "#updateBanner { background: #3a2e12; border: 1px solid #c9a227; "
+            "border-radius: 8px; }"
+        )
+        banner = QVBoxLayout(self.update_banner)
+        self.update_label = QLabel()
+        self.update_label.setWordWrap(True)
+        banner.addWidget(self.update_label)
+        banner_actions = QHBoxLayout()
+        self.update_download = QPushButton("Download")
+        self.update_download.clicked.connect(self._download_update)
+        self.update_later = QPushButton("Later")
+        self.update_later.clicked.connect(self._dismiss_update)
+        banner_actions.addWidget(self.update_download)
+        banner_actions.addWidget(self.update_later)
+        banner_actions.addStretch()
+        banner.addLayout(banner_actions)
+        self.update_banner.hide()
+        layout.addWidget(self.update_banner)
         self.state = QLabel("Starting…")
         self.state.setStyleSheet("font-size: 20px; font-weight: 600")
         self.detail = QLabel()
@@ -456,6 +482,46 @@ class MainWindow(QMainWindow):
                 self.rows[status.url] = row
                 self.server_list.addWidget(row)
             row.update_status(status)
+        self._refresh_update_banner(statuses)
+
+    def _refresh_update_banner(self, statuses: list[ConnectionStatus]) -> None:
+        pending = pending_update(
+            ((status.update_version, status.update_url) for status in statuses),
+            __version__,
+            self.config.dismissed_client_version,
+        )
+        if pending is None:
+            self.update_banner.hide()
+            return
+        version, url = pending
+        self._update_version = version
+        self._update_url = url
+        self.update_label.setText(
+            f"Client {version} is out. Download it, run the installer, then restart. "
+            "It takes a minute."
+        )
+        self.update_download.setText(f"Download {version}")
+        self.update_banner.show()
+        if self._notified_update != version:
+            if not self.isVisible():
+                self.tray.showMessage(
+                    "MTGA Constructed Testing",
+                    f"Client {version} is out. Open the status window to download it.",
+                )
+            self._notified_update = version
+
+    @Slot()
+    def _download_update(self) -> None:
+        if self._update_url:
+            QDesktopServices.openUrl(QUrl(self._update_url))
+
+    @Slot()
+    def _dismiss_update(self) -> None:
+        if not self._update_version:
+            return
+        self.config.dismissed_client_version = self._update_version
+        save_config(self.config)
+        self.update_banner.hide()
 
     @Slot(bool)
     def _pause(self, paused: bool) -> None:

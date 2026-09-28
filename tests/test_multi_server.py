@@ -368,6 +368,66 @@ def test_signing_in_names_the_group_and_keeps_the_token(config_dir, monkeypatch)
     assert credentials.get_token("https://omaha.mtgtest.com", "alice") == "granted"
 
 
+def test_signing_in_picks_up_an_advertised_client_update(config_dir, monkeypatch):
+    def handler(request):
+        if request.url.path == "/api/server-info":
+            return httpx.Response(
+                200,
+                json={
+                    "group_name": "Omaha Testing Group",
+                    "api_version": 1,
+                    "latest_client_version": "9.9.9",
+                    "client_release_url": "https://example/latest",
+                },
+            )
+        return httpx.Response(200, json={"token": "granted", "session_id": "s"})
+
+    monkeypatch.setattr(
+        session_module,
+        "TelemetryClient",
+        lambda url, token=None: TelemetryClient(
+            url, token, http=httpx.Client(transport=httpx.MockTransport(handler))
+        ),
+    )
+    conn = sign_in("omaha.mtgtest.com", "alice", "password", CredentialStore(MemoryKeyring()))
+
+    assert conn.update_version == "9.9.9"
+    assert conn.update_url == "https://example/latest"
+
+
+def test_a_heartbeat_that_names_a_newer_cut_is_surfaced(config_dir, tmp_path):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "latest_client_version": "9.9.9",
+                "client_release_url": "https://example/latest",
+            },
+        )
+
+    conn = connection("https://omaha.test", tmp_path, handler)
+    conn.deliver({"machine_id": "m"})
+
+    assert conn.state == "uploading"
+    assert conn.update_version == "9.9.9"
+    assert conn.update_url == "https://example/latest"
+    snapshot = TelemetryService([conn], tmp_path / "Player.log", lambda *_: None).snapshot()
+    assert snapshot[0].update_version == "9.9.9"
+
+
+def test_a_heartbeat_from_an_old_server_does_not_invent_an_update(config_dir, tmp_path):
+    conn = connection("https://omaha.test", tmp_path, ok)
+    conn.deliver({"machine_id": "m"})
+    assert conn.update_version == ""
+
+
+def test_dismissed_client_version_survives_a_save_and_reload(config_dir):
+    config = ClientConfig(dismissed_client_version="0.3.5")
+    save_config(config)
+    assert load_config().dismissed_client_version == "0.3.5"
+
+
 def test_a_server_newer_than_this_build_is_refused_before_a_password_is_sent():
     def handler(request):
         return httpx.Response(200, json={"group_name": "Future", "api_version": 99})

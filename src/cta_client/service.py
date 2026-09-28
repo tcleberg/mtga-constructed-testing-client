@@ -44,6 +44,8 @@ class ConnectionStatus:
     state: str
     detail: str
     pending: int
+    update_version: str = ""
+    update_url: str = ""
 
 
 class TelemetryService:
@@ -95,6 +97,8 @@ class TelemetryService:
                     state=connection.state,
                     detail=connection.detail,
                     pending=connection.pending,
+                    update_version=connection.update_version,
+                    update_url=connection.update_url,
                 )
                 for connection in self.connections
             ]

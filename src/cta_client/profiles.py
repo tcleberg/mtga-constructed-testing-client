@@ -61,6 +61,9 @@ class ServerProfile:
 class ClientConfig:
     servers: list[ServerProfile] = field(default_factory=list)
     log_path: str = ""
+    # Last advertised cut the tester dismissed with Later. A newer cut
+    # still prompts; the same one does not nag across restarts.
+    dismissed_client_version: str = ""
 
     def find(self, url: str) -> ServerProfile | None:
         url = normalize_server_url(url)
@@ -111,6 +114,7 @@ def load_config() -> ClientConfig:
     return ClientConfig(
         servers=servers,
         log_path=str(resolve_player_log_path(raw.get("log_path") or "")),
+        dismissed_client_version=str(raw.get("dismissed_client_version") or ""),
     )
 
 
@@ -127,5 +131,6 @@ def save_config(config: ClientConfig) -> None:
                 for server in config.servers
             ],
             "log_path": config.log_path,
+            "dismissed_client_version": config.dismissed_client_version,
         }
     )
