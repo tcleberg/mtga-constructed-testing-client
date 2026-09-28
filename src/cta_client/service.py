@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import platform
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -9,10 +10,18 @@ from typing import Callable
 
 from cta_client.connection import ServerConnection
 from cta_client.json_extract import iter_log_entries
-from cta_client.paths import machine_id
+from cta_client.paths import client_config_dir, machine_id
 from cta_client.tracker import CompletedGame, CompletedMatch, Identity, MatchTracker
 
 StatusCallback = Callable[[str, str], None]
+
+# One tick of the follower. A Proton Player.log is often hundreds of MB;
+# reading it in one go froze the UI on "Starting…" until the parse finished.
+READ_CHUNK_BYTES = 1_048_576
+# First time we see a log (or a new inode) we only catch the current
+# session. Replays of the whole history belong in a persisted offset.
+CATCH_UP_BYTES = 8_388_608
+FOLLOW_STATE_NAME = "log_follow.json"
 
 
 def machine_payload(arena_user_id: str | None = None, arena_screen_name: str | None = None) -> dict:
@@ -58,6 +67,7 @@ class TelemetryService:
         # Held whenever connections are read or replaced, because the GUI
         # thread reads them to draw the per-server list.
         self.lock = Lock()
+        self._restore_follow()
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -73,6 +83,7 @@ class TelemetryService:
         self.offset = 0
         self.inode = None
         self.leftover = ""
+        self._restore_follow()
 
     def snapshot(self) -> list[ConnectionStatus]:
         with self.lock:
@@ -105,6 +116,7 @@ class TelemetryService:
         return found
 
     def run(self) -> None:
+        self.status("starting", f"Looking for Arena at {self.log_path}")
         while not self.stop_event.wait(0.5):
             if self.paused.is_set():
                 self.status("paused", "Uploading is paused")
@@ -117,7 +129,12 @@ class TelemetryService:
                 self._deliver()
                 self.status("waiting", f"Waiting for Arena log at {self.log_path}")
                 continue
-            self._tick()
+            try:
+                self._tick()
+            except OSError as error:
+                logging.warning("Arena log unreadable at %s: %s", self.log_path, error)
+                self.status("waiting", f"Cannot read Arena log at {self.log_path}")
+                continue
             self._report()
 
     def _tick(self) -> None:
@@ -136,16 +153,54 @@ class TelemetryService:
             connection.deliver(machine)
 
     def _read_log(self) -> None:
-        stat = self.log_path.stat()
-        current_inode = getattr(stat, "st_ino", None)
-        if self.inode is not None and current_inode != self.inode or stat.st_size < self.offset:
-            self.offset, self.leftover = 0, ""
-        self.inode = current_inode
+        self._align_log()
         with self.log_path.open("r", encoding="utf-8", errors="replace") as handle:
             handle.seek(self.offset)
-            chunk = handle.read()
+            chunk = handle.read(READ_CHUNK_BYTES)
             self.offset = handle.tell()
         self._consume(self.leftover + chunk)
+        self._persist_follow()
+
+    def _align_log(self) -> None:
+        """Resume a known file, or skip history the first time we attach."""
+        stat = self.log_path.stat()
+        current_inode = getattr(stat, "st_ino", None)
+        rotated = (
+            self.inode is not None and current_inode != self.inode
+        ) or stat.st_size < self.offset
+        if rotated:
+            self.offset, self.leftover = 0, ""
+        if self.inode is None and self.offset == 0 and stat.st_size > CATCH_UP_BYTES:
+            self.offset = stat.st_size - CATCH_UP_BYTES
+            self.leftover = ""
+        self.inode = current_inode
+
+    def _follow_state_path(self) -> Path:
+        return client_config_dir() / FOLLOW_STATE_NAME
+
+    def _restore_follow(self) -> None:
+        path = self._follow_state_path()
+        if not path.is_file():
+            return
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        if saved.get("log_path") != str(self.log_path):
+            return
+        self.offset = int(saved.get("offset") or 0)
+        inode = saved.get("inode")
+        self.inode = int(inode) if inode is not None else None
+
+    def _persist_follow(self) -> None:
+        path = self._follow_state_path()
+        payload = json.dumps(
+            {
+                "log_path": str(self.log_path),
+                "offset": self.offset,
+                "inode": self.inode,
+            }
+        )
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(path)
 
     def _consume(self, text: str) -> None:
         if not text:

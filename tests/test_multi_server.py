@@ -16,7 +16,12 @@ from cta_client.profiles import (
     save_config,
 )
 from cta_client.queue import UploadQueue
-from cta_client.service import TelemetryService, diagnostics
+from cta_client.service import (
+    CATCH_UP_BYTES,
+    READ_CHUNK_BYTES,
+    TelemetryService,
+    diagnostics,
+)
 from cta_client.session import plant_dashboard_cookie, restore_connections, sign_in
 from cta_client.tracker import Identity
 from cta_client.uploader import IncompatibleServer, TelemetryClient
@@ -258,6 +263,73 @@ def test_removing_a_group_stops_its_uploads(config_dir, tmp_path):
 
     assert removed is tic
     assert [s.url for s in service.snapshot()] == ["https://omaha.test"]
+
+
+def test_first_attach_to_a_large_log_skips_old_history(config_dir, tmp_path):
+    log = tmp_path / "Player.log"
+    log.write_bytes(b"x" * (CATCH_UP_BYTES + 4096))
+    service = TelemetryService([], log, lambda *_: None)
+
+    service._align_log()
+
+    assert service.offset == 4096
+
+
+def test_a_known_log_resumes_where_it_left_off(config_dir, tmp_path):
+    log = tmp_path / "Player.log"
+    log.write_bytes(b"x" * (CATCH_UP_BYTES + 4096))
+    first = TelemetryService([], log, lambda *_: None)
+    first.offset = 12_345
+    first.inode = 99
+    first._persist_follow()
+
+    second = TelemetryService([], log, lambda *_: None)
+
+    assert second.offset == 12_345
+    assert second.inode == 99
+
+
+def test_one_tick_does_not_read_the_whole_log(config_dir, tmp_path):
+    log = tmp_path / "Player.log"
+    log.write_bytes(b"a" * (READ_CHUNK_BYTES + 80))
+    service = TelemetryService([], log, lambda *_: None)
+
+    service._read_log()
+
+    assert service.offset == READ_CHUNK_BYTES
+    service._read_log()
+    assert service.offset == READ_CHUNK_BYTES + 80
+
+
+def test_an_unreadable_log_is_reported_instead_of_killing_the_loop(config_dir, tmp_path):
+    log = tmp_path / "Player.log"
+    log.write_text("x", encoding="utf-8")
+    omaha = connection("https://omaha.test", tmp_path, ok)
+    reported: list[tuple[str, str]] = []
+    service = TelemetryService([omaha], log, lambda state, message: reported.append((state, message)))
+    service._tick = lambda: (_ for _ in ()).throw(OSError("denied"))
+    ticks = {"n": 0}
+
+    def wait(_timeout=None):
+        ticks["n"] += 1
+        return ticks["n"] > 1
+
+    service.stop_event.wait = wait
+    service.run()
+
+    assert reported[0][0] == "starting"
+    assert reported[1][0] == "waiting"
+    assert "Cannot read Arena log" in reported[1][1]
+
+
+def test_run_announces_itself_before_touching_the_log(config_dir, tmp_path):
+    reported: list[tuple[str, str]] = []
+    service = TelemetryService([], tmp_path / "missing.log", lambda state, message: reported.append((state, message)))
+    service.stop_event.set()
+    service.run()
+
+    assert reported[0][0] == "starting"
+    assert "missing.log" in reported[0][1]
 
 
 def test_diagnostics_name_every_group_and_its_backlog(config_dir, tmp_path):
