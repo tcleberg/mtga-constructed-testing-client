@@ -30,14 +30,37 @@ def game_result_for_number(results: list[Any], game_number: int) -> dict[str, An
     return game_results[-1]
 
 
-def _card_id(game_object: dict[str, Any]) -> int | None:
-    for key in ("overlayGrpId", "grpId", "cardId"):
-        value = game_object.get(key)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, str) and value.isdigit():
-            return int(value)
+# Ability objects use the same grpId field as cards. Preferring overlayGrpId
+# first recorded Map's explore ability (304) instead of the token (87484).
+_CARD_OBJECT_TYPES = {
+    "GameObjectType_Card",
+    "GameObjectType_SplitCard",
+    "GameObjectType_Token",
+}
+
+
+def _parse_grp_id(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str) and value.isdigit():
+        parsed = int(value)
+        return parsed if parsed > 0 else None
     return None
+
+
+def _card_id(game_object: dict[str, Any]) -> int | None:
+    for key in ("grpId", "cardId", "overlayGrpId"):
+        parsed = _parse_grp_id(game_object.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _is_card_object(game_object: dict[str, Any]) -> bool:
+    object_type = game_object.get("type")
+    if object_type is None:
+        return True
+    return object_type in _CARD_OBJECT_TYPES
 
 
 def _expand_card_list(cards: Any) -> list[int]:
@@ -304,9 +327,8 @@ class MatchTracker:
         }
 
         for game_object in state.get("gameObjects") or []:
-            if game_object.get("type") not in {"GameObjectType_Card", "GameObjectType_SplitCard", None}:
-                if game_object.get("type") and not str(game_object.get("type")).startswith("GameObjectType_"):
-                    continue
+            if not _is_card_object(game_object):
+                continue
             owner = game_object.get("ownerSeatId")
             if owner is None:
                 owner = game_object.get("controllerSeatId")

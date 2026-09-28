@@ -5,10 +5,10 @@ on:
     inputs:
       version:
         description: Version without the v prefix
-        default: "0.3.3"
+        default: "0.3.4"
       release_tag:
         description: Existing GitHub release to attach the archive to
-        default: "v0.3.3"
+        default: "v0.3.4"
 
 permissions:
   contents: write

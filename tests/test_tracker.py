@@ -420,6 +420,79 @@ def test_public_stack_and_battlefield_plays_do_not_need_a_zone_owner():
     assert game.opponent_played_cards == [200]
 
 
+def test_ability_objects_are_not_recorded_as_played_cards():
+    tracker = MatchTracker()
+    tracker.consume({"authenticateResponse": {"screenName": "Tester", "clientId": "USER1"}})
+    tracker.consume(_room("map-token"))
+    tracker.consume(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {"matchID": "map-token"},
+                            "gameObjects": [
+                                {
+                                    "type": "GameObjectType_Ability",
+                                    "ownerSeatId": 1,
+                                    "instanceId": 1,
+                                    "grpId": 169531,
+                                    "overlayGrpId": 169531,
+                                },
+                                {
+                                    "type": "GameObjectType_Card",
+                                    "ownerSeatId": 1,
+                                    "instanceId": 2,
+                                    "grpId": 87484,
+                                    "overlayGrpId": 304,
+                                    "zoneId": 28,
+                                },
+                                {
+                                    "type": "GameObjectType_Ability",
+                                    "ownerSeatId": 2,
+                                    "instanceId": 3,
+                                    "overlayGrpId": 304,
+                                },
+                            ],
+                            "zones": [
+                                {
+                                    "zoneId": 28,
+                                    "type": "ZoneType_Battlefield",
+                                    "objectInstanceIds": [1, 2, 3],
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    events = tracker.consume(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {
+                                "matchID": "map-token",
+                                "stage": "GameStage_GameOver",
+                                "matchState": "MatchState_GameComplete",
+                                "results": [{"scope": "MatchScope_Game", "winningTeamId": 1}],
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    game = events[0]
+    assert game.player_played_cards == [87484]
+    assert game.opponent_played_cards == []
+    assert game.opponent_seen_cards == []
+
+
 def test_each_finished_game_takes_its_own_row_from_the_cumulative_results():
     from cta_client.tracker import game_result_for_number
 
