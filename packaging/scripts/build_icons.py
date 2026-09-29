@@ -7,6 +7,7 @@ import os
 import shutil
 import struct
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -38,7 +39,7 @@ def ensure_resvg() -> Path:
     if not module.is_dir():
         RESVG_PREFIX.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            ["npm", "install", "--prefix", str(RESVG_PREFIX), "@resvg/resvg-js@3"],
+            ["npm", "install", "--prefix", str(RESVG_PREFIX), "@resvg/resvg-js@2"],
             check=True,
         )
     return RESVG_PREFIX
@@ -97,14 +98,15 @@ def main() -> int:
             rendered[size] = path.read_bytes()
             path.unlink()
         ico_pngs.append((size, rendered[size]))
-    subprocess.run(
-        ["iconutil", "-c", "icns", "-o", str(ICONS / "icon.icns"), str(ICONSET)],
-        check=True,
-    )
     write_ico(ICONS / "icon.ico", ico_pngs)
     DESKTOP_PNG.write_bytes(rendered[256])
+    if sys.platform == "darwin":
+        subprocess.run(
+            ["iconutil", "-c", "icns", "-o", str(ICONS / "icon.icns"), str(ICONSET)],
+            check=True,
+        )
+        print(f"wrote {ICONS / 'icon.icns'}")
     shutil.rmtree(ICONSET)
-    print(f"wrote {ICONS / 'icon.icns'}")
     print(f"wrote {ICONS / 'icon.ico'}")
     print(f"wrote {MASTER}")
     print(f"wrote {DESKTOP_PNG}")

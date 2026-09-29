@@ -2,7 +2,7 @@
   <!-- Full-bleed square. macOS and Windows apply their own mask. -->
   <rect width="1024" height="1024" fill="#0b1117"/>
   <g transform="translate(512 708)">
-    <!-- Two decks fanned as a matchup. Frames stay e1px at 16×16. -->
+    <!-- Two decks fanned as a matchup. Frames stay e1px at 16x16. -->
     <g transform="rotate(-17)">
       <rect x="-368" y="-548" width="400" height="572" rx="72" fill="#f2c14e"/>
       <rect x="-288" y="-468" width="240" height="412" rx="40" fill="#0b1117"/>

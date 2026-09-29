@@ -5,10 +5,9 @@ import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 
-from PySide6.QtCore import QObject, QLockFile, QThread, QUrl, Signal, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QIcon
+from PySide6.QtCore import QObject, QThread, QUrl, Signal, Slot
+from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -32,7 +31,11 @@ from cta_client import __version__
 from cta_client.connection import ServerConnection
 from cta_client.credentials import CredentialStore
 from cta_client.desktop import autostart
+from cta_client.desktop.resources import application_icon, install_linux_launcher
+from cta_client.desktop.single_instance import claim_instance
 from cta_client.paths import (
+    APP_ID,
+    APP_NAME,
     client_config_dir,
     client_log_dir,
     default_player_log_path,
@@ -51,14 +54,6 @@ from cta_client.update import pending_update
 from cta_client.uploader import AuthenticationRequired, IncompatibleServer
 
 DEFAULT_SERVER_URL = os.environ.get("CTA_DEFAULT_SERVER_URL", "")
-
-
-def application_icon() -> QIcon:
-    if getattr(sys, "frozen", False):
-        path = Path(sys._MEIPASS) / "icon.svg"
-    else:
-        path = Path(__file__).with_name("icon.svg")
-    return QIcon(str(path))
 
 STATE_LABELS = {
     "uploading": "Uploading",
@@ -156,7 +151,7 @@ class ServerRow(QFrame):
 class MainWindow(QMainWindow):
     def __init__(self, *, background: bool = False) -> None:
         super().__init__()
-        self.setWindowTitle("MTGA Constructed Testing")
+        self.setWindowTitle(APP_NAME)
         self.resize(560, 480)
         self.credentials = CredentialStore()
         self.credentials.migrate_legacy_token()
@@ -228,7 +223,7 @@ class MainWindow(QMainWindow):
     def _build_status(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.addWidget(QLabel("<h1>MTGA Constructed Testing</h1>"))
+        layout.addWidget(QLabel(f"<h1>{APP_NAME}</h1>"))
         self.update_banner = QFrame()
         self.update_banner.setObjectName("updateBanner")
         self.update_banner.setStyleSheet(
@@ -505,7 +500,7 @@ class MainWindow(QMainWindow):
         if self._notified_update != version:
             if not self.isVisible():
                 self.tray.showMessage(
-                    "MTGA Constructed Testing",
+                    APP_NAME,
                     f"Client {version} is out. Open the status window to download it.",
                 )
             self._notified_update = version
@@ -554,7 +549,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         event.ignore()
         self.hide()
-        self.tray.showMessage("MTGA Constructed Testing", "Still uploading in the background.")
+        self.tray.showMessage(APP_NAME, "Still uploading in the background.")
 
 
 def configure_logging() -> None:
@@ -574,18 +569,22 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     configure_logging()
     app = QApplication(sys.argv[:1])
-    app.setApplicationName("MTGA Constructed Testing")
+    app.setApplicationName(APP_NAME)
+    app.setDesktopFileName(APP_ID)
     app.setWindowIcon(application_icon())
     app.setQuitOnLastWindowClosed(False)
-    lock = QLockFile(str(client_config_dir() / "client.lock"))
-    lock.setStaleLockTime(10_000)
-    if not lock.tryLock(100):
+    claimed = claim_instance(__version__)
+    if claimed is None:
         return 0
+    install_linux_launcher()
     window = MainWindow(background=args.background)
+    claimed.show_requested.connect(window._show)
+    claimed.quit_requested.connect(app.quit)
     if not args.background or window.service is None:
         window.show()
     result = app.exec()
     window._stop_service()
+    claimed.release()
     return result
 
 

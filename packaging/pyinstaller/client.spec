@@ -33,21 +33,35 @@ runtime_hook.write_text(
     encoding="utf-8",
 )
 
+icon_png = root / "src/cta_client/desktop/icon.png"
+icon_svg = root / "src/cta_client/desktop/icon.svg"
+icon_ico = root / "packaging/icons/icon.ico"
+icon_icns = root / "packaging/icons/icon.icns"
+datas = [
+    (str(root / "LICENSE"), "."),
+    (str(root / "NOTICE"), "."),
+]
+if icon_png.is_file():
+    datas.append((str(icon_png), "."))
+if icon_svg.is_file():
+    datas.append((str(icon_svg), "."))
+
 analysis = Analysis(
     [str(root / "src/cta_client/desktop/app.py")],
     pathex=[str(root / "src")],
     binaries=[],
-    datas=[
-        (str(root / "LICENSE"), "."),
-        (str(root / "NOTICE"), "."),
-        (str(root / "src/cta_client/desktop/icon.svg"), "."),
-    ],
-    hiddenimports=hidden,
+    datas=datas,
+    hiddenimports=hidden + ["PySide6.QtSvg", "PySide6.QtNetwork"],
     runtime_hooks=[str(runtime_hook)],
     excludes=["cta_server", "numpy", "scipy", "pytest"],
     noarchive=False,
 )
 pyz = PYZ(analysis.pure)
+exe_kwargs = {}
+if sys.platform == "win32" and icon_ico.is_file():
+    exe_kwargs["icon"] = str(icon_ico)
+elif sys.platform == "darwin" and icon_icns.is_file():
+    exe_kwargs["icon"] = str(icon_icns)
 exe = EXE(
     pyz,
     analysis.scripts,
@@ -63,6 +77,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=signing_identity,
     entitlements_file=entitlements,
+    **exe_kwargs,
 )
 bundle = COLLECT(
     exe,
@@ -74,6 +89,9 @@ bundle = COLLECT(
 )
 
 if sys.platform == "darwin":
+    bundle_kwargs = {}
+    if icon_icns.is_file():
+        bundle_kwargs["icon"] = str(icon_icns)
     app = BUNDLE(
         bundle,
         name=f"{name}.app",
@@ -86,4 +104,5 @@ if sys.platform == "darwin":
             "LSUIElement": False,
             "NSHighResolutionCapable": True,
         },
+        **bundle_kwargs,
     )

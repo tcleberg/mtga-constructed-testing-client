@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=MTGA Constructed Testing
+Comment=Upload Arena match telemetry to your testing group
+Exec=@EXEC@
+Icon=@ICON@
+StartupWMClass=MTGA Constructed Testing
+Terminal=false
+Categories=Game;
+X-GNOME-UsesNotifications=true

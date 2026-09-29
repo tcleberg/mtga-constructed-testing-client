@@ -12,6 +12,7 @@ from platformdirs import user_config_dir, user_log_dir
 
 APP_NAME = "MTGA Constructed Testing"
 APP_AUTHOR = "MTGA CTA"
+APP_ID = "com.mtga-cta.client"
 
 # Steam store id for MTG Arena. Used as the preferred Proton prefix when
 # several compatdata directories have a Player.log.

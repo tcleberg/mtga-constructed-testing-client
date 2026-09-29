@@ -6,8 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from cta_client.desktop.resources import desktop_entry, install_linux_launcher
+from cta_client.paths import APP_ID, APP_NAME
+
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-APP_ID = "com.mtga-cta.client"
 
 
 def command() -> str:
@@ -20,13 +22,13 @@ def enabled() -> bool:
 
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-                winreg.QueryValueEx(key, "MTGA Constructed Testing")
+                winreg.QueryValueEx(key, APP_NAME)
             return True
         except FileNotFoundError:
             return False
     if platform.system() == "Darwin":
         return _launch_agent().exists()
-    return False
+    return _linux_autostart().is_file()
 
 
 def set_enabled(value: bool) -> None:
@@ -35,10 +37,10 @@ def set_enabled(value: bool) -> None:
 
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             if value:
-                winreg.SetValueEx(key, "MTGA Constructed Testing", 0, winreg.REG_SZ, command())
+                winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command())
             else:
                 try:
-                    winreg.DeleteValue(key, "MTGA Constructed Testing")
+                    winreg.DeleteValue(key, APP_NAME)
                 except FileNotFoundError:
                     pass
         return
@@ -59,7 +61,19 @@ def set_enabled(value: bool) -> None:
         elif path.exists():
             subprocess.run(["launchctl", "bootout", f"gui/{__import__('os').getuid()}", str(path)], check=False)
             path.unlink()
+        return
+    path = _linux_autostart()
+    if value:
+        install_linux_launcher()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(desktop_entry(command=command(), icon=APP_ID), encoding="utf-8")
+        return
+    path.unlink(missing_ok=True)
 
 
 def _launch_agent() -> Path:
     return Path.home() / "Library/LaunchAgents" / f"{APP_ID}.plist"
+
+
+def _linux_autostart() -> Path:
+    return Path.home() / ".config/autostart" / f"{APP_ID}.desktop"

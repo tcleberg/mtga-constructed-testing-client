@@ -65,9 +65,11 @@ fi
 
 cp -R "${APP}" dmg-root/
 ln -s /Applications dmg-root/Applications
-create-dmg --overwrite --skip-jenkins \
-  --volname "MTGA Constructed Testing" \
-  "${ARTIFACT}" dmg-root
+DMG_FLAGS=(--overwrite --skip-jenkins --volname "MTGA Constructed Testing")
+if [[ -f packaging/icons/icon.icns ]]; then
+  DMG_FLAGS+=(--volicon packaging/icons/icon.icns)
+fi
+create-dmg "${DMG_FLAGS[@]}" "${ARTIFACT}" dmg-root
 
 if [[ "${SIGNED}" == "yes" ]]; then
   # The image is signed too: it is the file the tester downloads, and it

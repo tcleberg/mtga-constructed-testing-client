@@ -11,6 +11,10 @@ rm -rf build dist artifacts
 mkdir -p artifacts
 python -m PyInstaller --clean --noconfirm packaging/pyinstaller/client.spec
 "${DIST}/${NAME}" --self-test
+cp -f src/cta_client/desktop/icon.png "${DIST}/icon.png"
+sed 's|@EXEC@|"./MTGA Constructed Testing"|;s|@ICON@|icon.png|' \
+  packaging/linux/com.mtga-cta.client.desktop \
+  > "${DIST}/com.mtga-cta.client.desktop"
 tar -C dist -czf "${ARTIFACT}" "${NAME}"
 (cd artifacts && sha256sum "$(basename "${ARTIFACT}")") \
   > "artifacts/SHA256SUMS-linux-${ARCH}.txt"
