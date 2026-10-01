@@ -20,6 +20,7 @@ UninstallDisplayIcon={app}\MTGA Constructed Testing.exe
 SetupIconFile=..\icons\icon.ico
 WizardStyle=modern
 CloseApplications=yes
+CloseApplicationsFilter=*.exe
 
 [Tasks]
 Name: "autostart"; Description: "Start automatically when I sign in"; GroupDescription: "Startup:"; Flags: checkedonce
@@ -38,3 +39,17 @@ Filename: "{app}\MTGA Constructed Testing.exe"; Description: "Open MTGA Construc
 
 [UninstallRun]
 Filename: "taskkill"; Parameters: "/IM ""MTGA Constructed Testing.exe"" /F"; Flags: runhidden; RunOnceId: "StopClient"
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  { Restart Manager often misses a tray-only Qt process, then DeleteFile
+    fails with ERROR_ACCESS_DENIED on the still-mapped exe. }
+  Exec(ExpandConstant('{sys}\taskkill.exe'),
+    '/IM "MTGA Constructed Testing.exe" /F',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := '';
+end;
+
