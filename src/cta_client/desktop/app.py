@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices
@@ -39,8 +40,10 @@ from cta_client.paths import (
     client_config_dir,
     client_log_dir,
     default_player_log_path,
+    discover_player_log_path,
     load_client_config,
     resolve_player_log_path,
+    _is_generated_default,
 )
 from cta_client.profiles import load_config, save_config
 from cta_client.service import ConnectionStatus, TelemetryService, diagnostics
@@ -202,7 +205,7 @@ class MainWindow(QMainWindow):
         advanced.setCheckable(True)
         advanced.setChecked(False)
         advanced_layout = QFormLayout(advanced)
-        self.log_path = QLineEdit(self.config.log_path or str(default_player_log_path()))
+        self.log_path = QLineEdit(self._display_log_path())
         advanced_layout.addRow("Arena log", self.log_path)
         layout.addWidget(advanced)
         self.add_error = QLabel()
@@ -327,6 +330,7 @@ class MainWindow(QMainWindow):
         self._worker = worker
         self.thread = thread
         thread.start()
+        self._sync_log_path_field()
         self._refresh_rows()
         self.stack.setCurrentWidget(self.status_page)
 
@@ -454,7 +458,28 @@ class MainWindow(QMainWindow):
     def _status(self, state: str, message: str) -> None:
         self.state.setText(STATE_LABELS.get(state, state.title()))
         self.detail.setText(message)
+        self._sync_log_path_field()
         self._refresh_rows()
+
+    def _display_log_path(self) -> str:
+        detected = discover_player_log_path()
+        if detected is not None:
+            return str(detected)
+        return self.config.log_path or str(default_player_log_path())
+
+    def _sync_log_path_field(self) -> None:
+        path = (
+            str(self.service.log_path)
+            if self.service is not None
+            else self._display_log_path()
+        )
+        if self.config.log_path != path:
+            self.config.log_path = path
+            save_config(self.config)
+        current = self.log_path.text().strip()
+        if current in {"", self.config.log_path} or _is_generated_default(Path(current)):
+            if current != path:
+                self.log_path.setText(path)
 
     def _refresh_rows(self) -> None:
         """Keep one row per group, updating in place.

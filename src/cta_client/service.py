@@ -10,7 +10,7 @@ from typing import Callable
 
 from cta_client.connection import ServerConnection
 from cta_client.json_extract import iter_log_entries
-from cta_client.paths import client_config_dir, machine_id
+from cta_client.paths import client_config_dir, machine_id, resolve_player_log_path
 from cta_client.tracker import CompletedGame, CompletedMatch, Identity, MatchTracker
 
 StatusCallback = Callable[[str, str], None]
@@ -125,6 +125,7 @@ class TelemetryService:
             if self.paused.is_set():
                 self.status("paused", "Uploading is paused")
                 continue
+            self._refresh_log_path()
             if not self.log_path.exists():
                 # Still check in. The group's admin should see a tester is
                 # online before Arena is launched, and the tester should
@@ -140,6 +141,14 @@ class TelemetryService:
                 self.status("waiting", f"Cannot read Arena log at {self.log_path}")
                 continue
             self._report()
+
+    def _refresh_log_path(self) -> None:
+        """Pick up a Proton log that appeared after we started waiting."""
+        resolved = resolve_player_log_path(str(self.log_path))
+        if resolved == self.log_path:
+            return
+        logging.info("Following Arena log at %s", resolved)
+        self.set_log_path(resolved)
 
     def _tick(self) -> None:
         self._read_log()

@@ -104,3 +104,35 @@ def test_linux_fallback_is_proton_when_steam_exists(tmp_path, monkeypatch):
     path = default_player_log_path()
     assert ARENA_STEAM_APP_ID in str(path)
     assert path.name == "Player.log"
+
+
+def test_linux_fallback_is_proton_even_without_a_steam_directory(tmp_path, monkeypatch):
+    _linux(monkeypatch, tmp_path)
+    path = default_player_log_path()
+    assert path == (
+        tmp_path
+        / ".steam/steam/steamapps/compatdata"
+        / ARENA_STEAM_APP_ID
+        / "pfx/drive_c/users/steamuser/AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log"
+    )
+
+
+def test_waiting_switches_from_xdg_default_to_proton_log(tmp_path, monkeypatch):
+    from cta_client.service import TelemetryService
+    import cta_client.service as service_module
+
+    _linux(monkeypatch, tmp_path)
+    monkeypatch.setattr(service_module, "client_config_dir", lambda: tmp_path)
+    stale = tmp_path / ".local/share/Wizards of the Coast/MTGA/Player.log"
+    service = TelemetryService([], stale, lambda *_: None)
+    log = _proton_log(tmp_path)
+    service._refresh_log_path()
+    assert service.log_path == log
+
+
+def test_linux_discovers_steamuser_log_by_statting_the_known_path(tmp_path, monkeypatch):
+    _linux(monkeypatch, tmp_path)
+    log = _proton_log(tmp_path)
+    assert log.is_file()
+    assert discover_player_log_path() == log
+    assert str(default_player_log_path()) == str(log)

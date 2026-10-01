@@ -91,15 +91,8 @@ def _fallback_player_log_path() -> Path:
     if system == "Windows":
         profile = os.environ.get("USERPROFILE", str(home))
         return Path(profile) / "AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log"
-    for root in _steam_roots(home):
-        return (
-            root
-            / "steamapps"
-            / "compatdata"
-            / ARENA_STEAM_APP_ID
-            / "pfx"
-            / "drive_c/users/steamuser/AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log"
-        )
+    for root in _declared_steam_root_paths(home):
+        return _arena_steamuser_logs(root)[0]
     return home / ".local/share/Wizards of the Coast/MTGA/Player.log"
 
 
@@ -118,6 +111,9 @@ def _linux_player_log_candidates(home: Path) -> list[Path]:
     found: list[Path] = []
     for wizards in _WIZARDS:
         found.append(home / ".local/share" / wizards / "MTGA/Player.log")
+    for root in _declared_steam_root_paths(home):
+        found.extend(_arena_steamuser_logs(root))
+        found.extend(_proton_player_logs(root / "steamapps" / "compatdata"))
     for root in _steam_roots(home):
         found.extend(_proton_player_logs(root / "steamapps" / "compatdata"))
     found.extend(_wine_player_logs(home / ".wine"))
@@ -136,7 +132,13 @@ def _linux_player_log_candidates(home: Path) -> list[Path]:
     return found
 
 
-def _steam_roots(home: Path) -> list[Path]:
+def _declared_steam_root_paths(home: Path) -> list[Path]:
+    """Steam library locations we always try, even if they are not directories yet.
+
+    `Path.is_file()` on the well-known Arena Proton log does not need the
+    Steam root to have passed an `is_dir()` filter first. Skipping that
+    gate is what kept Linux installs on the native XDG default.
+    """
     declared = [
         os.environ.get("STEAM_DIR"),
         str(home / ".steam/steam"),
@@ -148,11 +150,35 @@ def _steam_roots(home: Path) -> list[Path]:
         str(home / "snap/steam/common/.local/share/Steam"),
     ]
     roots: list[Path] = []
-    seen: set[Path] = set()
+    seen: set[str] = set()
     for raw in declared:
         if not raw:
             continue
         root = Path(os.path.expandvars(raw)).expanduser()
+        key = _normalized(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(root)
+    return roots
+
+
+def _arena_steamuser_logs(root: Path) -> list[Path]:
+    prefix = (
+        root
+        / "steamapps"
+        / "compatdata"
+        / ARENA_STEAM_APP_ID
+        / "pfx"
+        / "drive_c/users/steamuser/AppData/LocalLow"
+    )
+    return [prefix / wizards / "MTGA/Player.log" for wizards in _WIZARDS]
+
+
+def _steam_roots(home: Path) -> list[Path]:
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for root in _declared_steam_root_paths(home):
         if not root.is_dir():
             continue
         resolved = root.resolve()
