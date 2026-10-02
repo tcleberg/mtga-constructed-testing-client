@@ -8,8 +8,12 @@ from typing import Any
 from cta_client.formats import (
     best_of_from_event_name,
     best_of_from_win_condition,
+    event_id_from_room,
     format_from_attributes,
     format_from_event_name,
+    format_from_room,
+    is_excluded_event,
+    super_format_from_game_info,
 )
 
 
@@ -186,8 +190,10 @@ class MatchTracker:
             emitted.append(self.identity)
         if api_name and "SetDeck" in api_name:
             self._handle_set_deck(obj)
-        if "EventName" in obj and "Deck" in obj:
+        elif "EventName" in obj and "Deck" in obj:
             self._handle_set_deck(obj)
+        elif api_name and "EventJoin" in api_name.replace(".", "").replace("_", ""):
+            self._handle_event_join(obj)
         if "matchGameRoomStateChangedEvent" in obj:
             emitted.extend(self._handle_match_room(obj["matchGameRoomStateChangedEvent"]))
         if "greToClientEvent" in obj:
@@ -200,24 +206,50 @@ class MatchTracker:
             self._handle_client_to_gre(obj["clientToGreMessage"])
         return emitted
 
+    def _apply_queue(self, event_id: str | None, declared: str | None = None) -> None:
+        previous = self.current_event_id
+        named = format_from_event_name(event_id) if event_id else None
+        remembered = self.format_by_event.get(event_id) if event_id else None
+        chosen = declared or remembered or named
+        if event_id:
+            self.current_event_id = event_id
+            series = best_of_from_event_name(event_id)
+            if series is not None:
+                self.current_best_of = series
+            elif event_id != previous:
+                self.current_best_of = None
+        if event_id and event_id != previous and chosen is None:
+            self.current_format = None
+        if chosen is not None:
+            self.current_format = chosen
+            if event_id:
+                self.format_by_event[event_id] = chosen
+
+    def _handle_event_join(self, obj: dict[str, Any]) -> None:
+        payload = obj.get("payload") or obj.get("request") or obj
+        if isinstance(payload, str):
+            return
+        event_name = (
+            payload.get("EventName")
+            or payload.get("eventName")
+            or payload.get("InternalEventName")
+            or obj.get("EventName")
+        )
+        declared = format_from_attributes(payload) or format_from_attributes(obj)
+        self._apply_queue(event_name if isinstance(event_name, str) else None, declared)
+
     def _handle_set_deck(self, obj: dict[str, Any]) -> None:
         payload = obj.get("payload") or obj.get("request") or obj
         if isinstance(payload, str):
             return
         deck = payload.get("Deck") or payload.get("deck") or {}
-        summary_event = payload.get("EventName") or obj.get("EventName")
-        if summary_event:
-            self.current_event_id = summary_event
-            series = best_of_from_event_name(summary_event)
-            if series is not None:
-                self.current_best_of = series
+        summary_event = (
+            payload.get("EventName")
+            or payload.get("InternalEventName")
+            or obj.get("EventName")
+        )
         declared = format_from_attributes(deck) or format_from_attributes(payload)
-        if declared is None and summary_event:
-            declared = format_from_event_name(summary_event)
-        if declared is not None:
-            self.current_format = declared
-            if summary_event:
-                self.format_by_event[summary_event] = declared
+        self._apply_queue(summary_event if isinstance(summary_event, str) else None, declared)
         self.submitted_maindeck = _expand_card_list(deck.get("MainDeck") or deck.get("deckCards"))
         self.submitted_sideboard = _expand_card_list(deck.get("Sideboard") or deck.get("sideboardCards"))
 
@@ -225,23 +257,15 @@ class MatchTracker:
         info = event.get("gameRoomInfo") or {}
         config = info.get("gameRoomConfig") or {}
         match_id = config.get("matchId") or (info.get("finalMatchResult") or {}).get("matchId")
-        event_id = config.get("eventId") or config.get("eventName")
-        if event_id:
-            self.current_event_id = event_id
-            named = format_from_event_name(event_id)
-            self.current_format = (
-                self.format_by_event.get(event_id)
-                or named
-                or self.current_format
-            )
-            series = best_of_from_event_name(event_id)
-            if series is not None:
-                self.current_best_of = series
         if match_id and match_id != self.current_match_id:
             if self.current_match_id is not None:
                 self._reset_game_state(keep_match=False)
             self.current_match_id = match_id
             self.game_number = 1
+        self._apply_queue(
+            event_id_from_room(config, self.identity.screen_name),
+            format_from_room(config),
+        )
         for player in config.get("reservedPlayers") or []:
             seat = player.get("systemSeatId")
             if seat is None:
@@ -285,14 +309,31 @@ class MatchTracker:
         if hand:
             self.drawn_hands[self.seat_id].append(list(hand))
 
+    def _apply_super_format(self, game_info: dict[str, Any]) -> None:
+        """Queue leftovers are not truth. Arena's superFormat is."""
+        super_fmt = super_format_from_game_info(
+            game_info.get("superFormat") if isinstance(game_info.get("superFormat"), str) else None
+        )
+        if super_fmt == "limited":
+            self.current_format = None
+            if not is_excluded_event(self.current_event_id):
+                self.current_event_id = None
+            return
+        if super_fmt == "constructed" and is_excluded_event(self.current_event_id):
+            self.current_event_id = None
+
     def _handle_game_state(self, state: dict[str, Any]) -> list[CompletedGame | CompletedMatch]:
         self.game_started_at = self.game_started_at or self.observed_at
         game_info = state.get("gameInfo") or {}
         match_id = game_info.get("matchID") or game_info.get("matchId")
-        if match_id:
+        if match_id and match_id != self.current_match_id:
+            if self.current_match_id is not None:
+                self._reset_game_state(keep_match=False)
             self.current_match_id = match_id
+            self.game_number = 1
         if game_info.get("gameNumber") is not None:
             self.game_number = int(game_info["gameNumber"])
+        self._apply_super_format(game_info)
         win_condition = game_info.get("matchWinCondition") or game_info.get("winCondition")
         from_condition = best_of_from_win_condition(
             win_condition if isinstance(win_condition, str) else None
@@ -554,6 +595,7 @@ class MatchTracker:
             self._emitted_game_keys = set()
             self.current_format = None
             self.current_best_of = None
+            self.current_event_id = None
 
     def _series_already_decided(self) -> bool:
         """A Bo3 ends at two wins. A later GameOver is a different series."""

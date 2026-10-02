@@ -606,3 +606,162 @@ def test_prerelease_standard_queues_are_standard_without_a_format_attribute():
         tracker.consume({"EventName": event_name, "Deck": {"MainDeck": [1]}})
         assert tracker.current_format == "standard", event_name
         assert tracker.current_best_of == series, event_name
+
+
+def test_event_join_without_a_deck_sets_the_constructed_challenge_queue():
+    tracker = MatchTracker()
+    tracker.consume(
+        {"request": {"EventName": "Constructed_BestOf3"}},
+        api_name="EventJoin",
+    )
+    assert tracker.current_event_id == "Constructed_BestOf3"
+    assert tracker.current_best_of == 3
+    assert tracker.current_format is None
+
+
+def test_direct_challenge_room_reads_player_event_and_format():
+    tracker = MatchTracker()
+    tracker.consume({"authenticateResponse": {"screenName": "Tester", "clientId": "USER1"}})
+    tracker.consume(
+        {
+            "matchGameRoomStateChangedEvent": {
+                "gameRoomInfo": {
+                    "stateType": "MatchGameRoomStateType_Playing",
+                    "gameRoomConfig": {
+                        "matchId": "challenge-1",
+                        "reservedPlayers": [
+                            {
+                                "userId": "USER1",
+                                "playerName": "Tester",
+                                "systemSeatId": 1,
+                                "eventId": "Constructed_BestOf3",
+                                "clientMetadata": {"Format": "Standard"},
+                            },
+                            {
+                                "userId": "USER2",
+                                "playerName": "Opponent",
+                                "systemSeatId": 2,
+                                "eventId": "Constructed_BestOf3",
+                            },
+                        ],
+                    },
+                }
+            }
+        }
+    )
+    assert tracker.current_event_id == "Constructed_BestOf3"
+    assert tracker.current_format == "standard"
+    assert tracker.current_best_of == 3
+
+
+def test_a_new_challenge_room_does_not_keep_a_leftover_draft_event():
+    tracker = MatchTracker()
+    tracker.consume({"authenticateResponse": {"screenName": "Tester", "clientId": "USER1"}})
+    tracker.consume(_room("draft-1", "PremierDraft_FRA_20260929"))
+    tracker.consume(
+        {
+            "matchGameRoomStateChangedEvent": {
+                "gameRoomInfo": {
+                    "stateType": "MatchGameRoomStateType_MatchCompleted",
+                    "gameRoomConfig": {
+                        "matchId": "draft-1",
+                        "eventId": "PremierDraft_FRA_20260929",
+                        "reservedPlayers": [
+                            {"userId": "USER1", "playerName": "Tester", "systemSeatId": 1},
+                            {"userId": "USER2", "playerName": "Opponent", "systemSeatId": 2},
+                        ],
+                    },
+                    "finalMatchResult": {
+                        "matchId": "draft-1",
+                        "resultList": [{"scope": "MatchScope_Match", "winningTeamId": 1}],
+                    },
+                }
+            }
+        }
+    )
+    assert tracker.current_event_id is None
+    tracker.consume(
+        {
+            "matchGameRoomStateChangedEvent": {
+                "gameRoomInfo": {
+                    "stateType": "MatchGameRoomStateType_Playing",
+                    "gameRoomConfig": {
+                        "matchId": "challenge-2",
+                        "clientMetadata": [{"key": "Format", "value": "Standard"}],
+                        "reservedPlayers": [
+                            {
+                                "userId": "USER1",
+                                "playerName": "Tester",
+                                "systemSeatId": 1,
+                                "eventId": "DirectGame",
+                            },
+                            {
+                                "userId": "USER2",
+                                "playerName": "Opponent",
+                                "systemSeatId": 2,
+                                "eventId": "DirectGame",
+                            },
+                        ],
+                    },
+                }
+            }
+        }
+    )
+    assert tracker.current_event_id == "DirectGame"
+    assert tracker.current_format == "standard"
+    assert tracker.current_best_of is None
+
+
+def test_gre_match_id_change_does_not_keep_a_leftover_draft_event():
+    tracker = MatchTracker()
+    tracker.consume(_room("draft-1", "PremierDraft_FRA_20260929"))
+    assert tracker.current_event_id == "PremierDraft_FRA_20260929"
+    tracker.consume(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {
+                                "matchID": "challenge-2",
+                                "gameNumber": 1,
+                                "superFormat": "SuperFormat_Constructed",
+                                "matchWinCondition": "MatchWinCondition_Best2Of3",
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    assert tracker.current_match_id == "challenge-2"
+    assert tracker.current_event_id is None
+    assert tracker.current_format is None
+    assert tracker.current_best_of == 3
+
+
+def test_constructed_super_format_drops_a_stale_premier_draft_event():
+    tracker = MatchTracker()
+    tracker.consume(_room("challenge-1", "PremierDraft_FRA_20260929"))
+    assert tracker.current_event_id == "PremierDraft_FRA_20260929"
+    tracker.consume(
+        {
+            "greToClientEvent": {
+                "greToClientMessages": [
+                    {
+                        "type": "GREMessageType_GameStateMessage",
+                        "gameStateMessage": {
+                            "gameInfo": {
+                                "matchID": "challenge-1",
+                                "superFormat": "SuperFormat_Constructed",
+                                "matchWinCondition": "MatchWinCondition_Best2Of3",
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    assert tracker.current_event_id is None
+    assert tracker.current_best_of == 3
